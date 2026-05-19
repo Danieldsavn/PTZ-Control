@@ -1,0 +1,28 @@
+# Build artifacts
+build/
+dist/*.exe
+dist/*.download
+dist/*.bak
+dist/apply_update.ps1
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local / operator data (beside exe)
+dist/switcher.json
+dist/presets.json
+dist/window.json
+dist/obs.json
+switcher.json
+presets.json
+window.json
+obs.json
+
+# Scratch
+.tmp/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

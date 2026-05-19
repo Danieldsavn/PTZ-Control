@@ -1,0 +1,3513 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Camera Control</title>
+  <style>
+    /* Church website inspired styling - clean, professional, readable */
+    html, body { 
+      margin:0; padding:0; height:100%; overflow:hidden; 
+      background:#f5f7fa; 
+      color:#2c3e50; 
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    .top {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 100vh;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      background: #f5f7fa;
+      overflow: hidden;
+    }
+    .titleBar {
+      flex: 0 0 32px;
+      min-height: 32px;
+      background: #1e3a5f;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px 0 14px;
+      user-select: none;
+    }
+    .titleBar .appTitle { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; }
+    .winBtns { display: flex; gap: 4px; }
+    .winBtn {
+      width: 36px; height: 24px;
+      padding: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: #e2e8f0;
+      border: 1px solid transparent;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .winBtn:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); transform: none; }
+    .winBtn.close:hover { background: #dc2626; border-color: #b91c1c; color: #fff; }
+    .previewRow {
+      flex: 0 0 299px;
+      height: 299px;
+      min-height: 0;
+      max-height: 299px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      padding: 8px 12px 0;
+      box-sizing: border-box;
+    }
+    .previewCell {
+      background: #0f172a;
+      border-radius: 10px;
+      border: 1px solid #334155;
+      overflow: hidden;
+      position: relative;
+      min-height: 0;
+    }
+    .previewCell .previewLabel {
+      display: none !important;
+    }
+    .previewCell img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      background: #000;
+    }
+    .previewPlaceholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #94a3b8;
+      font-size: 12px;
+      text-align: center;
+      padding: 12px;
+    }
+    .mainStack {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 6px 12px 8px;
+      box-sizing: border-box;
+      gap: 6px;
+      position: relative;
+    }
+    .streamBarWrap {
+      position: relative;
+      flex: 0 0 auto;
+    }
+    .controlsArea {
+      flex: 1 1 0;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr);
+      grid-template-rows: 1fr;
+      gap: 8px;
+      overflow: hidden;
+    }
+    .top.simpleMode .controlsArea {
+      grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr);
+    }
+    #cam1Panel { grid-column: 1; grid-row: 1; min-width: 0; }
+    #cam2Panel { grid-column: 3; grid-row: 1; min-width: 0; }
+    #simpleModeSwitchWrap { grid-column: 2; grid-row: 1; }
+    .top:not(.simpleMode) .controlsArea {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+    .top:not(.simpleMode) #cam1Panel { grid-column: 1; }
+    .top:not(.simpleMode) #cam2Panel { grid-column: 2; }
+    .top:not(.simpleMode) #simpleModeSwitchWrap { display: none !important; }
+    .ptz button {
+      min-width: 0;
+      padding: 10px 6px;
+      font-size: 18px;
+      line-height: 1;
+      font-weight: 600;
+    }
+    .ptz .ptzZoom { font-size: 12px; font-weight: 500; }
+
+    .settingsOverlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 40px 24px 32px;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+    .settingsOverlay.open {
+      display: flex;
+    }
+    .settingsBackdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      cursor: pointer;
+    }
+    .settingsModal {
+      position: relative;
+      z-index: 1;
+      width: min(760px, 100%);
+      max-height: calc(100vh - 80px);
+      margin: 0 auto;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+      overflow: hidden;
+    }
+    .settingsModalHdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 18px 10px;
+      border-bottom: 1px solid #e2e8f0;
+      flex: 0 0 auto;
+    }
+    .settingsModalHdr h3 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a365d;
+    }
+    .settingsCloseBtn {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      font-size: 22px;
+      line-height: 1;
+      border-radius: 8px;
+    }
+    .settingsOverlay .obsSettings {
+      display: none;
+      flex: 1 1 auto;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+      padding: 12px 18px 18px;
+      box-sizing: border-box;
+    }
+    .settingsOverlay .obsSettings.visible {
+      display: flex;
+    }
+    .settingsTabBody {
+      flex: 1 1 auto;
+      min-height: 420px;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    /* controlsArea must stay grid (not display:contents) so cameras sit left/right */
+    .top.simpleMode .hideInSimpleMode {
+      display: none !important;
+    }
+    .top.simpleMode .panel {
+      min-width: 0;
+    }
+    /* In simple mode, right column (Focus + PTZ + Speed) is hidden unless editing */
+    .top.simpleMode .rightColContent {
+      display: none !important;
+    }
+    .top.simpleMode .panel.editMode .rightColContent {
+      display: block !important;
+    }
+    .top.simpleMode .panel.editMode .rightColContent .focusControlBox {
+      display: none !important;
+    }
+    .focusControlBox {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid #d1d9e0;
+      border-radius: 10px;
+      background: #f8fafc;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+    }
+    .focusControlBox .focusManualBtn {
+      min-width: 52px;
+      font-weight: 600;
+    }
+    /* Switch: own box in the grid between the two camera panels */
+    #simpleModeSwitchWrap {
+      display: none;
+      align-self: center;
+      justify-self: center;
+      width: 100%;
+      min-height: 100px;
+      padding: 16px;
+      border: 1px solid #d1d9e0;
+      border-radius: 12px;
+      background: #f8fafc;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      box-sizing: border-box;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .top.simpleMode #simpleModeSwitchWrap {
+      display: flex;
+    }
+    #simpleModeSwitchWrap .switchLabel {
+      font-size: 11px;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    #simpleModeSwitchWrap button {
+      padding: 14px 20px;
+      font-size: 15px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+    }
+    /* Toggle switch (left/right) instead of checkbox */
+    .toggleWrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .toggleSwitch {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      background: #cbd5e1;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+    .toggleSwitch.on {
+      background: #1e40af;
+    }
+    .toggleSwitch::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      transition: transform 0.2s;
+    }
+    .toggleSwitch.on::after {
+      transform: translateX(20px);
+    }
+    .panel {
+      overflow: hidden;
+      min-height: 0;
+      height: 100%;
+      align-self: stretch;
+      border: 1px solid #d1d9e0;
+      border-radius: 12px;
+      padding: 8px 10px;
+      background: #ffffff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      display: grid;
+      grid-template-rows: auto auto auto 1fr;
+      gap: 8px;
+      min-height: 0;
+    }
+    
+    /* OBS Status Bar */
+    .obsBar {
+      height: 6px;
+      border-radius: 3px;
+      margin-bottom: 4px;
+      transition: background-color 0.3s;
+      position: relative;
+    }
+    .obsBar.program { background: #e74c3c; }
+    .obsBar.preview { background: #2ecc71; }
+    .obsBar.none { background: #95a5a6; }
+    .obsBar.disconnected { background: #95a5a6; }
+    .obsBarLabel {
+      font-size: 10px;
+      margin-top: 2px;
+      opacity: 0.7;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .obsCutSlot {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      width: 200px;
+      min-width: 200px;
+    }
+    .obsCutSlot .obsConnecting,
+    .obsCutSlot .obsConnected {
+      font-size: 12px;
+      color: #64748b;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .obsCutSlot .obsConnected { color: #16a34a; }
+    .obsSpinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid #e2e8f0;
+      border-top-color: #1e40af;
+      border-radius: 50%;
+      animation: obsSpin 0.7s linear infinite;
+    }
+    @keyframes obsSpin {
+      to { transform: rotate(360deg); }
+    }
+
+    .streamBar {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 8px 12px;
+      border: 1px solid #d1d9e0;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+    .streamBar .streamLabel {
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-right: 4px;
+    }
+    .streamBar button.keyBtn.on,
+    .streamBar button.stillBtn.on,
+    .streamBar button.splitviewBtn.on {
+      background: #16a34a;
+      border-color: #15803d;
+      color: #fff;
+    }
+    .streamBar button.keyBtn.offActive {
+      background: #1e40af;
+      border-color: #1e3a8a;
+      color: #fff;
+    }
+    .streamBar button.goLive.on {
+      background: #dc2626;
+      border-color: #b91c1c;
+      color: #fff;
+    }
+    .streamBar button.streamStop.on {
+      background: #dc2626;
+      border-color: #b91c1c;
+      color: #fff;
+      box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.25);
+    }
+    .streamBar button.streamStop:disabled {
+      background: #e2e8f0;
+      color: #94a3b8;
+      cursor: not-allowed;
+      opacity: 0.9;
+      box-shadow: none;
+    }
+    .streamBar button.streamStop:disabled:hover {
+      background: #e2e8f0;
+      transform: none;
+    }
+    .streamBar .streamSettingsBtn {
+      font-size: 12px;
+      padding: 6px 12px;
+      margin-left: 6px;
+    }
+    .streamBar .streamBarSectionGap {
+      flex: 0 0 50px;
+      width: 50px;
+      min-width: 50px;
+      height: 1px;
+    }
+    .streamBarStatus {
+      flex: 1 1 200px;
+      min-width: 180px;
+      max-width: 340px;
+      height: 32px;
+      padding: 0 10px;
+      margin-left: 4px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      background: #fff;
+      font-size: 12px;
+      font-family: inherit;
+      color: #475569;
+      box-sizing: border-box;
+    }
+    .streamBarStatus:focus {
+      outline: none;
+      border-color: #cbd5e1;
+    }
+    .streamBarStatus.live {
+      color: #15803d;
+      border-color: #86efac;
+      background: #f0fdf4;
+      font-weight: 600;
+    }
+    .streamBarStatus.offline {
+      color: #475569;
+      background: #fff;
+    }
+    .streamBarStatus.warn {
+      color: #b45309;
+      border-color: #fcd34d;
+      background: #fffbeb;
+    }
+    .streamToast {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 4px;
+      z-index: 50;
+      pointer-events: none;
+      display: flex;
+      justify-content: center;
+    }
+    .streamToastMsg {
+      max-width: 100%;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      background: #1e3a5f;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .streamToastMsg.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .streamToastMsg.error {
+      background: #b91c1c;
+    }
+    .streamToastMsg.ok {
+      background: #15803d;
+    }
+    
+    .hdr { 
+      display:flex; 
+      align-items:center; 
+      justify-content:space-between; 
+      gap: 12px; 
+      margin-bottom: 2px;
+    }
+    .trackingWrap {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .title { 
+      font-size: 18px; 
+      font-weight: 600; 
+      color: #1a365d;
+      letter-spacing: -0.3px;
+    }
+    .row { 
+      display:flex; 
+      gap: 8px; 
+      flex-wrap: wrap; 
+      align-items: center; 
+    }
+
+    .ip {
+      font-size: 11px; 
+      color: #64748b;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      display:flex;
+      align-items:center;
+      gap: 6px;
+    }
+
+    button {
+      background:#1e40af; 
+      color:#ffffff;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 13px;
+      user-select: none;
+      touch-action: none;
+      transition: background-color 0.2s, transform 0.1s;
+    }
+    button:hover { 
+      background:#1e3a8a; 
+      transform: translateY(-1px);
+    }
+    button:active { transform: translateY(0); }
+    button.primary { background:#1e40af; }
+    button.primary:hover { background:#1e3a8a; }
+    button.danger { background:#dc2626; }
+    button.danger:hover { background:#b91c1c; }
+    button.ghost { 
+      background: transparent; 
+      color: #64748b;
+      border: 1px solid #e2e8f0;
+    }
+    button.ghost:hover { 
+      background: #f8fafc; 
+      border-color: #cbd5e1;
+    }
+    button.cut {
+      background: #dc2626;
+      font-weight: 600;
+      padding: 8px 14px;
+    }
+    button.cut:hover { background: #b91c1c; }
+
+    .grid2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      min-height: 0;
+      overflow: hidden;
+      height: 100%;
+    }
+    .grid2 > div { min-height: 0; overflow: hidden; }
+
+    .ptz {
+      display:grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      align-content: start;
+      margin-top: 6px;
+    }
+
+    .small { font-size: 12px; color: #64748b; }
+
+    /* Preset grid */
+    .presetGrid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+      margin-top: 0;
+      min-height: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+    .grid2 > div:first-child {
+      min-height: 0;
+      overflow: hidden;
+    }
+    .presetGrid.twoColumns {
+      grid-template-columns: 1fr 1fr;
+    }
+    .presetRow {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      align-items: center;
+    }
+    .presetBtn {
+      text-align: left;
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      color: #2c3e50;
+    }
+    .presetBtn:hover { 
+      background: #f1f5f9; 
+      border-color: #cbd5e1;
+    }
+    .miniBtn {
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-weight: 500;
+      min-width: 70px;
+      font-size: 12px;
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+    /* Online dot */
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      flex: 0 0 auto;
+    }
+    .dot.online { background: #2ecc71; }
+    .dot.offline { background: #e74c3c; }
+
+    /* Active preset highlight */
+    .presetBtn.active {
+      border-color: #1e40af;
+      background: #eff6ff;
+      color: #1e40af;
+      font-weight: 600;
+    }
+
+    /* Edit-mode hide/show */
+    .editOnly { display: none; }
+    .panel.editMode .editOnly { display: inline-block; }
+
+    /* Switching hold: gray out controls for the live camera */
+    .panel.controlsLocked button:not(.cut),
+    .panel.controlsLocked input[type="range"],
+    .panel.controlsLocked .presetBtn { opacity: 0.5; pointer-events: none; cursor: not-allowed; }
+
+    /* When tracking is on: disable preset recall buttons only */
+    .panel.trackingOn .presetBtn { opacity: 0.5; pointer-events: none; cursor: not-allowed; }
+
+    /* Speed slider */
+    .speedWrap{
+      margin-top: 6px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+    }
+    .speedHdr{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .speedPct{
+      font-size: 11px;
+      color: #64748b;
+      padding: 3px 8px;
+      border-radius: 6px;
+      border: 1px solid #e2e8f0;
+      background: #ffffff;
+    }
+    .speedLabels{
+      display:flex;
+      justify-content:space-between;
+      font-size: 11px;
+      color: #94a3b8;
+      margin-top: 4px;
+    }
+    input[type="range"].speed{
+      width: 100%;
+      accent-color: #1e40af;
+    }
+    
+    /* OBS Settings Panel */
+    .obsSettings {
+      padding: 16px;
+      height: fit-content;
+    }
+    .obsSettings h3 {
+      margin: 0 0 12px 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #1a365d;
+    }
+    .obsSettingsRow {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .obsSettingsRow label {
+      font-size: 12px;
+      color: #64748b;
+      font-weight: 500;
+    }
+    .obsSettingsRow input {
+      padding: 8px 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      font-size: 13px;
+      background: #ffffff;
+      color: #2c3e50;
+    }
+    .obsSettingsRow input:focus {
+      outline: none;
+      border-color: #1e40af;
+      box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.1);
+    }
+    .obsSettingsActions {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .settingsTabs {
+      display: flex;
+      gap: 0;
+      margin: 0 0 14px 0;
+      border-bottom: 1px solid #e2e8f0;
+      flex: 0 0 auto;
+    }
+    .settingsTab {
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #64748b;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      cursor: pointer;
+      border-radius: 6px 6px 0 0;
+    }
+    .settingsTab:hover { color: #1e40af; }
+    .settingsTab.active {
+      color: #1e40af;
+      border-bottom-color: #1e40af;
+    }
+    .settingsTabPanel {
+      display: none;
+    }
+    .settingsTabPanel.active {
+      display: block;
+    }
+    .streamStatusPanel {
+      margin: 0 0 14px 0;
+      padding: 10px 12px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      color: #475569;
+      line-height: 1.5;
+    }
+    .streamStatusPanel b { color: #1e293b; }
+    .streamStatusPanel .liveYes { color: #16a34a; font-weight: 600; }
+    .streamStatusPanel .liveNo { color: #64748b; }
+    .streamStatusPanel .warnLine { color: #b45309; }
+
+
+    .startupSplash {
+      position: fixed;
+      inset: 0;
+      z-index: 20000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(165deg, #0f2744 0%, #1e3a5f 42%, #152a47 100%);
+      color: #f8fafc;
+      transition: opacity 0.55s ease, visibility 0.55s ease;
+    }
+    .startupSplash.fade-out {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .startupSplashInner {
+      text-align: center;
+      padding: 32px 40px;
+      max-width: 480px;
+      width: min(480px, calc(100vw - 32px));
+    }
+    .startupTitle {
+      margin: 0 0 24px 0;
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      font-family: Georgia, "Times New Roman", serif;
+      color: #fff;
+    }
+    .startupSteps {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      text-align: left;
+    }
+    .startupStep {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      font-size: 14px;
+      color: rgba(226, 232, 240, 0.75);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .startupStep:last-child { border-bottom: none; }
+    .startupStep.active { color: #fff; }
+    .startupStep.done { color: rgba(226, 232, 240, 0.95); }
+    .startupStep.warn { color: #fcd34d; }
+    .startupStep.skipped { color: rgba(226, 232, 240, 0.45); }
+    .startupStepAction {
+      margin-left: auto;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .startupStepAction:hover {
+      background: rgba(255, 255, 255, 0.22);
+    }
+    .startupStepIcon {
+      flex: 0 0 22px;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .startupStepIcon .stepSpinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #d4a853;
+      border-radius: 50%;
+      animation: startupSpin 0.8s linear infinite;
+    }
+    @keyframes startupSpin {
+      to { transform: rotate(360deg); }
+    }
+    .startupStepIcon .stepCheck {
+      color: #4ade80;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .startupStepIcon .stepWarn {
+      color: #fbbf24;
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .startupStepIcon .stepPending {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.25);
+    }
+    .welcomeShortcuts {
+      margin: 16px 0 0;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+    }
+    .welcomeShortcutsTitle {
+      margin: 0 0 8px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #1e3a5f;
+    }
+    .welcomeShortcuts ul {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 13px;
+      color: #475569;
+    }
+    .welcomeShortcuts li { margin: 4px 0; }
+    .welcomeShortcuts kbd {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #e2e8f0;
+      font-family: inherit;
+      font-size: 12px;
+      color: #334155;
+    }
+    .settingsModalHdrActions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .settingsUnsavedBadge {
+      font-size: 12px;
+      font-weight: 600;
+      color: #b45309;
+      display: none;
+    }
+    .settingsUnsavedBadge.visible { display: inline; }
+    .settingsTab.unsaved::after {
+      content: " •";
+      color: #dc2626;
+    }
+    .midiClearBtn {
+      min-width: 52px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      color: #64748b;
+      cursor: pointer;
+    }
+    .midiClearBtn:hover { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+
+    .streamStopConfirmOverlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 15000;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    .streamStopConfirmOverlay.open {
+      display: flex;
+    }
+    .streamStopConfirmBackdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(2px);
+    }
+    .streamStopConfirmModal {
+      position: relative;
+      z-index: 1;
+      width: min(400px, 100%);
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+      border: 1px solid #e2e8f0;
+      overflow: hidden;
+      animation: streamStopConfirmIn 0.22s ease-out;
+    }
+    @keyframes streamStopConfirmIn {
+      from { opacity: 0; transform: scale(0.96) translateY(8px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .streamStopConfirmBody {
+      padding: 28px 28px 20px;
+      text-align: center;
+    }
+    .streamStopConfirmIcon {
+      width: 52px;
+      height: 52px;
+      margin: 0 auto 16px;
+      border-radius: 50%;
+      background: #fef2f2;
+      color: #dc2626;
+      font-size: 28px;
+      line-height: 52px;
+      font-weight: 700;
+    }
+    .streamStopConfirmTitle {
+      margin: 0 0 8px;
+      font-size: 20px;
+      font-weight: 600;
+      color: #0f172a;
+    }
+    .streamStopConfirmMessage {
+      margin: 0;
+      font-size: 14px;
+      color: #64748b;
+      line-height: 1.5;
+    }
+    .streamStopConfirmActions {
+      display: flex;
+      gap: 10px;
+      padding: 16px 24px 24px;
+      justify-content: center;
+    }
+    .streamStopConfirmActions button {
+      min-width: 130px;
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+    }
+    .streamStopConfirmCancel {
+      background: #f1f5f9;
+      color: #475569;
+      border: 1px solid #e2e8f0 !important;
+    }
+    .streamStopConfirmCancel:hover {
+      background: #e2e8f0;
+      color: #334155;
+    }
+    .streamStopConfirmEnd {
+      background: #dc2626;
+      color: #fff;
+    }
+    .streamStopConfirmEnd:hover {
+      background: #b91c1c;
+    }
+    .updateConfirmPrimary {
+      background: #1e40af;
+      color: #fff;
+    }
+    .updateConfirmPrimary:hover {
+      background: #1d4ed8;
+    }
+    .updateConfirmPrimary:disabled {
+      background: #94a3b8;
+      cursor: wait;
+    }
+
+    .welcomeInfoOverlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 18000;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
+      cursor: pointer;
+    }
+    .welcomeInfoOverlay.open {
+      display: flex;
+      background: rgba(15, 23, 42, 0.55);
+      backdrop-filter: blur(2px);
+    }
+    .welcomeInfoModal {
+      position: relative;
+      z-index: 1;
+      width: min(520px, 100%);
+      max-height: min(85vh, 640px);
+      overflow-y: auto;
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+      border: 1px solid #e2e8f0;
+      padding: 28px 28px 20px;
+      text-align: left;
+      animation: welcomeInfoIn 0.28s ease-out;
+    }
+    @keyframes welcomeInfoIn {
+      from { opacity: 0; transform: scale(0.97) translateY(10px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .welcomeInfoTitle {
+      margin: 0 0 16px;
+      font-size: 22px;
+      font-weight: 600;
+      color: #0f172a;
+      line-height: 1.3;
+    }
+    .welcomeInfoBody p {
+      margin: 0 0 14px;
+      font-size: 14px;
+      color: #475569;
+      line-height: 1.55;
+    }
+    .welcomeInfoBody p:last-child {
+      margin-bottom: 0;
+    }
+    .welcomeInfoDismiss {
+      display: block;
+      width: 100%;
+      margin-top: 22px;
+      padding: 11px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      background: #1e40af;
+      color: #fff;
+      cursor: pointer;
+    }
+    .welcomeInfoDismiss:hover {
+      background: #1d4ed8;
+    }
+
+    .midiMapTable {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 16px;
+      font-size: 13px;
+    }
+    .midiMapTable th,
+    .midiMapTable td {
+      padding: 10px 8px;
+      text-align: left;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .midiMapTable th {
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .midiMapTable td.midiNoteCell {
+      font-family: ui-monospace, Consolas, monospace;
+      color: #1e40af;
+      font-weight: 600;
+    }
+    .midiMapTable tr.midiLearning td {
+      background: #eff6ff;
+    }
+    .midiLearnBtn {
+      min-width: 72px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      color: #334155;
+      cursor: pointer;
+    }
+    .midiLearnBtn:hover { background: #e2e8f0; }
+    .midiLearnBtn.learning {
+      background: #1e40af;
+      border-color: #1e40af;
+      color: #fff;
+    }
+    #midiStatusLine {
+      margin: 0 0 10px;
+      font-size: 12px;
+      color: #64748b;
+    }
+    #midiStatusLine.warn { color: #b45309; }
+  </style>
+</head>
+
+<body>
+  <div id="startupSplash" class="startupSplash" aria-live="polite" aria-busy="true">
+    <div class="startupSplashInner">
+      <h1 class="startupTitle">Preparing the table</h1>
+      <ul class="startupSteps" id="startupSteps"></ul>
+    </div>
+  </div>
+  <div id="welcomeInfo" class="welcomeInfoOverlay" aria-hidden="true" onclick="closeWelcomeInfo()">
+    <div class="welcomeInfoModal" role="dialog" aria-modal="true" aria-labelledby="welcomeInfoTitle" onclick="event.stopPropagation()">
+      <h2 id="welcomeInfoTitle" class="welcomeInfoTitle">Hello! Thank you for serving today.</h2>
+      <div class="welcomeInfoBody">
+        <p>This control software should be the only program you need to control the cameras and livestream. The right monitor is fed directly from the video switcher. The top-right window on that monitor shows what is currently going to the livestream.</p>
+        <p>You can monitor livestream status in this program, or in the bottom-right corner of that same monitor, including audio levels.</p>
+        <p>Have fun helping create a worship experience for those who are not able to attend in person this Sunday!</p>
+      </div>
+      <div class="welcomeShortcuts">
+        <p class="welcomeShortcutsTitle">Keyboard shortcuts</p>
+        <ul>
+          <li><kbd>Space</kbd> — CUT (take preview to program)</li>
+          <li><kbd>Esc</kbd> — Close Settings</li>
+        </ul>
+      </div>
+      <button type="button" class="welcomeInfoDismiss" onclick="closeWelcomeInfo()">Got it</button>
+    </div>
+  </div>
+  <div id="streamStopConfirm" class="streamStopConfirmOverlay" aria-hidden="true">
+    <div class="streamStopConfirmBackdrop" onclick="closeStreamStopConfirm()" aria-hidden="true"></div>
+    <div class="streamStopConfirmModal" role="alertdialog" aria-modal="true" aria-labelledby="streamStopConfirmTitle" aria-describedby="streamStopConfirmMessage">
+      <div class="streamStopConfirmBody">
+        <div class="streamStopConfirmIcon" aria-hidden="true">&#9888;</div>
+        <h2 id="streamStopConfirmTitle" class="streamStopConfirmTitle">End live stream?</h2>
+        <p id="streamStopConfirmMessage" class="streamStopConfirmMessage">Are you sure you want to end the live stream?</p>
+      </div>
+      <div class="streamStopConfirmActions">
+        <button type="button" class="streamStopConfirmCancel" id="streamStopConfirmCancel" onclick="closeStreamStopConfirm()">Cancel</button>
+        <button type="button" class="streamStopConfirmEnd" id="streamStopConfirmEnd" onclick="confirmStreamStop()">End Stream</button>
+      </div>
+    </div>
+  </div>
+  <div id="updateConfirm" class="streamStopConfirmOverlay" aria-hidden="true">
+    <div class="streamStopConfirmBackdrop" aria-hidden="true"></div>
+    <div class="streamStopConfirmModal" role="alertdialog" aria-modal="true" aria-labelledby="updateConfirmTitle" aria-describedby="updateConfirmMessage">
+      <div class="streamStopConfirmBody">
+        <h2 id="updateConfirmTitle" class="streamStopConfirmTitle">Update available</h2>
+        <p id="updateConfirmMessage" class="streamStopConfirmMessage">A newer version is available.</p>
+      </div>
+      <div class="streamStopConfirmActions">
+        <button type="button" class="streamStopConfirmCancel" id="updateConfirmLater" onclick="dismissUpdateConfirm()">Remind me later</button>
+        <button type="button" class="updateConfirmPrimary" id="updateConfirmNow" onclick="confirmUpdateNow()">Update now</button>
+      </div>
+    </div>
+  </div>
+  <div class="top">
+    <div class="titleBar pywebview-drag-region">
+      <span class="appTitle">Camera Control</span>
+      <span class="winBtns">
+        <button type="button" class="winBtn" title="Minimize" onclick="windowMinimize()">&#x2013;</button>
+        <button type="button" class="winBtn" title="Fullscreen" onclick="windowToggleFullscreen()">&#x2922;</button>
+        <button type="button" class="winBtn close" title="Close" onclick="windowClose()">&#x2715;</button>
+      </span>
+    </div>
+    <div class="previewRow hideInSimpleMode">
+      <div class="previewCell" id="cam1PreviewCell">
+        <span class="previewLabel" id="cam1PreviewLabel">Camera 1</span>
+        <img id="cam1Preview" alt="Camera 1 preview" />
+        <div class="previewPlaceholder" id="cam1PreviewPlaceholder">Preview loading...</div>
+      </div>
+      <div class="previewCell" id="cam2PreviewCell">
+        <span class="previewLabel" id="cam2PreviewLabel">Camera 2</span>
+        <img id="cam2Preview" alt="Camera 2 preview" />
+        <div class="previewPlaceholder" id="cam2PreviewPlaceholder">Preview loading...</div>
+      </div>
+    </div>
+    <div class="mainStack">
+    <div class="streamBarWrap">
+    <div class="streamBar" id="streamBar">
+      <span class="streamLabel">Keys</span>
+      <button type="button" class="ghost keyBtn" id="usk1OnBtn" onclick="usk1On()">Lyrics On</button>
+      <button type="button" class="ghost keyBtn" id="usk1OffBtn" onclick="usk1Off()">Lyrics Off</button>
+      <button type="button" class="ghost keyBtn" id="dsk1OnBtn" onclick="dsk1On()">Title On</button>
+      <button type="button" class="ghost keyBtn" id="dsk1OffBtn" onclick="dsk1Off()">Title Off</button>
+      <span class="streamLabel" style="margin-left:8px;">Stills</span>
+      <button type="button" class="ghost stillBtn" id="stillSidBtn" onclick="activateStill(1)">Sid</button>
+      <button type="button" class="ghost stillBtn" id="stillNateBtn" onclick="activateStill(2)">Nate</button>
+      <button type="button" class="ghost stillBtn" id="stillCecilBtn" onclick="activateStill(3)">Cecil</button>
+      <span class="streamLabel" style="margin-left:8px;">Splitview</span>
+      <button type="button" class="ghost splitviewBtn" id="splitviewOnBtn" onclick="splitviewOn()">Splitview On</button>
+      <button type="button" class="ghost splitviewBtn" id="splitviewOffBtn" onclick="splitviewOff()">Splitview Off</button>
+      <span class="streamBarSectionGap" aria-hidden="true"></span>
+      <span class="streamLabel">Stream</span>
+      <button type="button" class="primary goLive" id="streamGoLiveBtn" onclick="streamGoLive()">Go Live</button>
+      <button type="button" class="danger streamStop" id="streamStopBtn" onclick="requestStreamStop()" disabled aria-disabled="true">Stop</button>
+      <input type="text" id="streamBarStatus" class="streamBarStatus" readonly aria-label="Stream status" value="Loading stream status…" />
+      <button type="button" class="ghost streamSettingsBtn" id="streamSettingsBtn" onclick="toggleObsSettings()">Settings</button>
+    </div>
+    <div id="streamToast" class="streamToast" aria-live="polite"><span id="streamToastMsg" class="streamToastMsg"></span></div>
+    </div>
+    <div class="controlsArea">
+    <!-- Camera 1 -->
+    <div class="panel" id="cam1Panel">
+      <!-- OBS Status Bar -->
+      <div>
+        <div class="obsBar" id="cam1ObsBar"></div>
+        <div class="obsBarLabel" id="cam1ObsLabel">Switcher: -</div>
+      </div>
+      
+      <div class="hdr">
+        <div class="title" id="cam1Title">Camera 1 Controls</div>
+        <div class="row">
+          <div class="trackingWrap hideInSimpleMode">
+            <button class="danger" id="cam1TrackingOn" onclick="trackingOn('cam1')">Auto Tracking ON</button>
+            <button class="ghost" id="cam1TrackingOff" onclick="trackingOff('cam1')">Auto Tracking OFF</button>
+          </div>
+          <div class="obsCutSlot hideInSimpleMode">
+            <span class="obsConnecting" id="cam1ObsConnecting"><span class="obsSpinner"></span> Connecting</span>
+            <span class="obsConnected" id="cam1ObsConnected" style="display:none;">Connected</span>
+            <button class="cut" onclick="obsCut('cam1')" id="cam1CutBtn" style="display:none;">CUT</button>
+          </div>
+          <button class="ghost editBtn" onclick="toggleEdit('cam1')">Edit</button>
+          <div class="ip">
+            <span class="dot" id="cam1Dot"></span>
+            <span id="cam1Ip">Status</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div>
+          <div class="presetGrid" id="cam1Presets"></div>
+        </div>
+
+        <div class="rightColContent hideInSimpleMode">
+          <div class="focusControlBox">
+            <button class="primary" id="cam1FocusOn" onclick="focusOn('cam1')">Auto Focus ON</button>
+            <button class="ghost" id="cam1FocusOff" onclick="focusOff('cam1')">Auto Focus OFF</button>
+            <button type="button" class="ghost focusManualBtn" id="cam1FocusIn" onpointerdown="focusDown('cam1','focus_in')" onpointerup="focusUp('cam1')" onpointercancel="focusUp('cam1')" aria-label="Focus in">In</button>
+            <button type="button" class="ghost focusManualBtn" id="cam1FocusOut" onpointerdown="focusDown('cam1','focus_out')" onpointerup="focusUp('cam1')" onpointercancel="focusUp('cam1')" aria-label="Focus out">Out</button>
+          </div>
+
+                    <div class="ptz">
+            <div></div>
+            <button type="button" onpointerdown="ptzDown('cam1','up')" onpointerup="ptzUp('cam1')" onpointercancel="ptzUp('cam1')" aria-label="Pan up">&#9650;</button>
+            <div></div>
+
+            <button type="button" onpointerdown="ptzDown('cam1','left')" onpointerup="ptzUp('cam1')" onpointercancel="ptzUp('cam1')" aria-label="Pan left">&#9664;</button>
+            <div></div>
+            <button type="button" onpointerdown="ptzDown('cam1','right')" onpointerup="ptzUp('cam1')" onpointercancel="ptzUp('cam1')" aria-label="Pan right">&#9654;</button>
+
+            <div></div>
+            <button type="button" onpointerdown="ptzDown('cam1','down')" onpointerup="ptzUp('cam1')" onpointercancel="ptzUp('cam1')" aria-label="Pan down">&#9660;</button>
+            <div></div>
+
+            <button type="button" class="ptzZoom" onpointerdown="ptzDown('cam1','zoom_out')" onpointerup="ptzUp('cam1')" onpointercancel="ptzUp('cam1')">Zoom -</button>
+            <div></div>
+            <button type="button" class="ptzZoom" onpointerdown="ptzDown('cam1','zoom_in')" onpointerup="ptzUp('cam1')" onpointercancel="ptzUp('cam1')">Zoom +</button>
+          </div>
+
+          <!-- Speed slider -->
+          <div class="speedWrap">
+            <div class="speedHdr">
+              <div class="small">Speed</div>
+              <div class="speedPct" id="cam1SpeedPct">60%</div>
+            </div>
+            <input class="speed" id="cam1Speed" type="range" min="0" max="100" value="60"
+                   oninput="speedChanged('cam1')" />
+            <div class="speedLabels">
+              <span>Slow</span>
+              <span>Fast</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div id="simpleModeSwitchWrap">
+      <span class="switchLabel">Switch camera</span>
+      <button class="primary" onclick="simpleModeSwitch()" title="Switch to the other camera">&#9664; Switch &#9654;</button>
+    </div>
+
+    <!-- Camera 2 -->
+    <div class="panel" id="cam2Panel">
+      <!-- OBS Status Bar -->
+      <div>
+        <div class="obsBar" id="cam2ObsBar"></div>
+        <div class="obsBarLabel" id="cam2ObsLabel">Switcher: -</div>
+      </div>
+      
+      <div class="hdr">
+        <div class="title" id="cam2Title">Camera 2 Controls</div>
+        <div class="row">
+          <div class="trackingWrap hideInSimpleMode">
+            <button class="danger" id="cam2TrackingOn" onclick="trackingOn('cam2')">Auto Tracking ON</button>
+            <button class="ghost" id="cam2TrackingOff" onclick="trackingOff('cam2')">Auto Tracking OFF</button>
+          </div>
+          <div class="obsCutSlot hideInSimpleMode">
+            <span class="obsConnecting" id="cam2ObsConnecting"><span class="obsSpinner"></span> Connecting</span>
+            <span class="obsConnected" id="cam2ObsConnected" style="display:none;">Connected</span>
+            <button class="cut" onclick="obsCut('cam2')" id="cam2CutBtn" style="display:none;">CUT</button>
+          </div>
+          <button class="ghost editBtn" onclick="toggleEdit('cam2')">Edit</button>
+          <div class="ip">
+            <span class="dot" id="cam2Dot"></span>
+            <span id="cam2Ip">Status</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div>
+          <div class="presetGrid" id="cam2Presets"></div>
+        </div>
+
+        <div class="rightColContent hideInSimpleMode">
+          <div class="focusControlBox">
+            <button class="primary" id="cam2FocusOn" onclick="focusOn('cam2')">Auto Focus ON</button>
+            <button class="ghost" id="cam2FocusOff" onclick="focusOff('cam2')">Auto Focus OFF</button>
+            <button type="button" class="ghost focusManualBtn" id="cam2FocusIn" onpointerdown="focusDown('cam2','focus_in')" onpointerup="focusUp('cam2')" onpointercancel="focusUp('cam2')" aria-label="Focus in">In</button>
+            <button type="button" class="ghost focusManualBtn" id="cam2FocusOut" onpointerdown="focusDown('cam2','focus_out')" onpointerup="focusUp('cam2')" onpointercancel="focusUp('cam2')" aria-label="Focus out">Out</button>
+          </div>
+
+                    <div class="ptz">
+            <div></div>
+            <button type="button" onpointerdown="ptzDown('cam2','up')" onpointerup="ptzUp('cam2')" onpointercancel="ptzUp('cam2')" aria-label="Pan up">&#9650;</button>
+            <div></div>
+
+            <button type="button" onpointerdown="ptzDown('cam2','left')" onpointerup="ptzUp('cam2')" onpointercancel="ptzUp('cam2')" aria-label="Pan left">&#9664;</button>
+            <div></div>
+            <button type="button" onpointerdown="ptzDown('cam2','right')" onpointerup="ptzUp('cam2')" onpointercancel="ptzUp('cam2')" aria-label="Pan right">&#9654;</button>
+
+            <div></div>
+            <button type="button" onpointerdown="ptzDown('cam2','down')" onpointerup="ptzUp('cam2')" onpointercancel="ptzUp('cam2')" aria-label="Pan down">&#9660;</button>
+            <div></div>
+
+            <button type="button" class="ptzZoom" onpointerdown="ptzDown('cam2','zoom_out')" onpointerup="ptzUp('cam2')" onpointercancel="ptzUp('cam2')">Zoom -</button>
+            <div></div>
+            <button type="button" class="ptzZoom" onpointerdown="ptzDown('cam2','zoom_in')" onpointerup="ptzUp('cam2')" onpointercancel="ptzUp('cam2')">Zoom +</button>
+          </div>
+
+          <!-- Speed slider -->
+          <div class="speedWrap">
+            <div class="speedHdr">
+              <div class="small">Speed</div>
+              <div class="speedPct" id="cam2SpeedPct">60%</div>
+            </div>
+            <input class="speed" id="cam2Speed" type="range" min="0" max="100" value="60"
+                   oninput="speedChanged('cam2')" />
+            <div class="speedLabels">
+              <span>Slow</span>
+              <span>Fast</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+    </div>
+
+
+    </div>
+  </div>
+  <div class="settingsOverlay" id="settingsDock" aria-hidden="true">
+    <div class="settingsBackdrop" onclick="requestCloseSettings()" aria-hidden="true"></div>
+    <div class="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="settingsModalHdr">
+        <h3 id="settingsTitle">Settings</h3>
+        <div class="settingsModalHdrActions">
+          <span id="settingsUnsavedBadge" class="settingsUnsavedBadge">Unsaved changes</span>
+          <button type="button" class="primary" id="settingsSaveBtn" onclick="saveSettingsActiveTab()">Save</button>
+          <button type="button" class="ghost settingsCloseBtn" title="Close" onclick="requestCloseSettings()">&#x2715;</button>
+        </div>
+      </div>
+      <div class="obsSettings" id="obsSettings">
+      <div class="settingsTabs">
+        <button type="button" class="settingsTab active" id="settingsTabStream" data-tab="stream" onclick="switchSettingsTab('stream')">Stream</button>
+        <button type="button" class="settingsTab" id="settingsTabSwitcher" data-tab="switcher" onclick="switchSettingsTab('switcher')">Switcher</button>
+        <button type="button" class="settingsTab" id="settingsTabGeneral" data-tab="general" onclick="switchSettingsTab('general')">General</button>
+        <button type="button" class="settingsTab" id="settingsTabMidi" data-tab="midi" onclick="switchSettingsTab('midi')">MIDI</button>
+      </div>
+
+      <div class="settingsTabBody" id="settingsTabBody">
+      <div id="settingsTabPanelStream" class="settingsTabPanel active">
+        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Paste your <b>Stream 1</b> RTMP key below (same as in the switcher). Use the main bar <b>Go Live</b> / <b>Stop</b> buttons when you are ready.</p>
+        <div id="streamStatusPanel" class="streamStatusPanel small">Loading stream status…</div>
+        <div class="obsSettingsRow">
+          <label>Stream Key 1</label>
+          <input type="text" id="stream1KeyInput" placeholder="Paste stream key from Restream.IO" autocomplete="off" />
+        </div>
+        <div class="obsSettingsActions">
+          <button class="primary" onclick="saveStreamSettings()">Save to Switcher</button>
+          <button class="ghost" onclick="loadStreamSettings()">Reload</button>
+          <button class="ghost" onclick="requestCloseSettings()">Close</button>
+        </div>
+      </div>
+
+      <div id="settingsTabPanelSwitcher" class="settingsTabPanel">
+        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Connect to your <b>OSEE GoStream Duet</b> switcher (GSP protocol, port <b>19010</b> by default). <b>Camera 1</b> is on <b>SDI 1</b>, <b>Camera 2</b> on <b>SDI 2</b>. CUT selects preview then takes it to program.</p>
+        <div id="switcherInfoDebug" class="small" style="margin-bottom:12px; padding:8px; background:#f1f5f9; border-radius:6px; color:#475569;"></div>
+        <div class="obsSettingsRow">
+          <label>Switcher IP address:</label>
+          <input type="text" id="obsHost" placeholder="e.g. 192.168.1.80" />
+        </div>
+        <div class="obsSettingsRow">
+          <label>Control port:</label>
+          <input type="number" id="obsPort" placeholder="19010" />
+        </div>
+        <div class="obsSettingsRow">
+          <label id="obsHoldTimeLabel">Switching Hold Time (0–5 s)</label>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <input type="range" id="obsHoldTime" min="0" max="5" value="0" style="flex:1; accent-color: #1e40af;" oninput="document.getElementById('obsHoldTimeValue').textContent = this.value + ' s';" />
+            <span id="obsHoldTimeValue" class="small">0 s</span>
+          </div>
+        </div>
+        <div class="obsSettingsActions">
+          <button class="primary" onclick="saveObsConfig()">Save & Connect</button>
+          <button class="ghost" onclick="refreshSwitcherInfo()">Refresh status</button>
+          <button class="ghost" onclick="requestCloseSettings()">Close</button>
+        </div>
+      </div>
+
+      <div id="settingsTabPanelMidi" class="settingsTabPanel">
+        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Receive-only MIDI — assign a note to each scene. Press <b>Learn</b>, then play a note within <b>15 seconds</b>. Press <b>Learn</b> again (or choose another row) to cancel.</p>
+        <p id="midiStatusLine" class="small">Loading MIDI…</p>
+        <div class="obsSettingsRow">
+          <label>MIDI input device</label>
+          <select id="midiDeviceSelect" style="flex:1; max-width:420px; padding:8px; border-radius:6px; border:1px solid #cbd5e1;"></select>
+        </div>
+        <table class="midiMapTable" aria-label="MIDI scene mappings">
+          <thead>
+            <tr>
+              <th>Scene</th>
+              <th>MIDI note</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="midiMapBody"></tbody>
+        </table>
+        <div class="obsSettingsActions">
+          <button class="primary" onclick="saveMidiDevice()">Save device</button>
+          <button class="ghost" onclick="loadMidiSettings()">Refresh</button>
+          <button class="ghost" onclick="requestCloseSettings()">Close</button>
+        </div>
+      </div>
+
+      <div id="settingsTabPanelGeneral" class="settingsTabPanel">
+        <div class="obsSettingsRow" style="align-items: center;">
+          <label>Check for updates on startup</label>
+          <div class="toggleWrap">
+            <div class="toggleSwitch" id="showUpdateCheckToggle" role="button" tabindex="0" aria-pressed="true" title="Check for updates" onclick="onShowUpdateCheckToggleClick()" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); onShowUpdateCheckToggleClick(); }"></div>
+          </div>
+        </div>
+        <div class="obsSettingsRow" style="align-items: center;">
+          <label>Operation mode</label>
+          <div class="toggleWrap">
+            <span class="small" style="color:#64748b; margin-right:8px;">Simple Mode</span>
+            <div class="toggleSwitch" id="obsSimpleModeToggle" role="button" tabindex="0" aria-pressed="false" title="Simple Mode" onclick="onSimpleModeToggleClick()" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); onSimpleModeToggleClick(); }"></div>
+          </div>
+        </div>
+        <div class="obsSettingsRow">
+          <label>Number of presets</label>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <input type="range" id="settingsPresetCount" min="2" max="12" step="2" value="6" style="flex:1; accent-color: #1e40af;" oninput="var v=this.value; document.getElementById('settingsPresetCountValue').textContent=v;" />
+            <span id="settingsPresetCountValue" class="small">6</span>
+          </div>
+        </div>
+        <div class="obsSettingsRow">
+          <label id="settingsCam1IpLabel">Camera 1 IP:</label>
+          <input type="text" id="settingsCam1Ip" placeholder="e.g., 192.168.2.91" />
+        </div>
+        <div class="obsSettingsRow">
+          <label id="settingsCam2IpLabel">Camera 2 IP:</label>
+          <input type="text" id="settingsCam2Ip" placeholder="e.g., 192.168.2.92" />
+        </div>
+        <p class="settingsVersion small" id="settingsVersion" style="margin:14px 0 0 0; color:#64748b;">Version —</p>
+        <div class="obsSettingsActions">
+          <button class="primary" onclick="saveGeneralSettings()">Save</button>
+          <button class="ghost" onclick="requestCloseSettings()">Close</button>
+        </div>
+      </div>
+      </div>
+    </div>
+    </div>
+  </div>
+
+<script>
+  const state = {
+    cam1: { activePreset: null, edit: false, trackingOn: null, focusOn: null },
+    cam2: { activePreset: null, edit: false, trackingOn: null, focusOn: null },
+    obsConfig: null,
+    lockControlsUntil: { cam1: 0, cam2: 0 },
+    currentLiveCam: "cam1",
+    presetCount: 6
+  };
+
+  // --- speed persistence ---
+  let speedSaveTimers = { cam1: null, cam2: null };
+  // OBS: show "Connected" only once per connect; hide after 3s
+  let obsConnectedShown = { cam1: false, cam2: false };
+  let obsConnectedHideTimers = { cam1: null, cam2: null };
+
+  // Cached DOM refs (set in init) to avoid repeated getElementById in hot paths
+  const dom = {};
+  const cameraWasOnline = { cam1: false, cam2: false };
+  let switcherWasConnected = false;
+
+
+  let streamToastTimer = null;
+  const settingsDirty = { stream: false, switcher: false, general: false, midi: false };
+  let settingsActiveTab = "stream";
+  const STARTUP_STEP_SETTINGS_TAB = {
+    cam1: "general", cam2: "general", switcher: "switcher",
+    usk: "switcher", multisource: "switcher", dsk: "switcher", streamui: "stream"
+  };
+
+  function showStreamToast(msg, kind) {
+    const el = document.getElementById("streamToastMsg");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.className = "streamToastMsg visible" + (kind === "error" ? " error" : (kind === "ok" ? " ok" : ""));
+    if (streamToastTimer) window.clearTimeout(streamToastTimer);
+    streamToastTimer = window.setTimeout(function () {
+      el.classList.remove("visible");
+    }, kind === "error" ? 4500 : 2800);
+  }
+
+  function markSettingsDirty(tab) {
+    if (!tab || !(tab in settingsDirty)) return;
+    settingsDirty[tab] = true;
+    updateSettingsDirtyUi();
+  }
+
+  function clearSettingsDirty(tab) {
+    if (tab) {
+      if (tab in settingsDirty) settingsDirty[tab] = false;
+    } else {
+      Object.keys(settingsDirty).forEach(function (k) { settingsDirty[k] = false; });
+    }
+    updateSettingsDirtyUi();
+  }
+
+  function anySettingsDirty() {
+    return Object.keys(settingsDirty).some(function (k) { return settingsDirty[k]; });
+  }
+
+  function updateSettingsDirtyUi() {
+    const badge = document.getElementById("settingsUnsavedBadge");
+    const dirty = anySettingsDirty();
+    if (badge) badge.classList.toggle("visible", dirty);
+    document.querySelectorAll(".settingsTab").forEach(function (tabEl) {
+      const tab = tabEl.getAttribute("data-tab");
+      tabEl.classList.toggle("unsaved", !!(tab && settingsDirty[tab]));
+    });
+  }
+
+  function openSettingsToTab(tabName) {
+    tabName = normalizeSettingsTab(tabName || "stream");
+    const overlay = document.getElementById("settingsDock");
+    if (overlay && !overlay.classList.contains("open")) {
+      const panel = dom.obsSettings;
+      if (panel) panel.classList.add("visible");
+      overlay.classList.add("open");
+      overlay.setAttribute("aria-hidden", "false");
+      resetSettingsScroll();
+      loadObsConfig().then(function () {
+        switchSettingsTab(tabName);
+        loadSettingsCameraIps();
+        loadSettingsPresetCount();
+        loadSettingsVersion();
+        refreshSwitcherInfo();
+        if (tabName === "midi") loadMidiSettings();
+        if (tabName === "stream") { loadStreamSettings(); refreshStreamStatus(); }
+      });
+    } else {
+      switchSettingsTab(tabName);
+    }
+  }
+
+  async function saveSettingsActiveTab() {
+    const tab = settingsActiveTab || "stream";
+    if (tab === "stream") await saveStreamSettings(true);
+    else if (tab === "switcher") await saveObsConfig(true);
+    else if (tab === "general") await saveGeneralSettings(true);
+    else if (tab === "midi") await saveMidiDevice(true);
+  }
+
+  async function saveAllDirtySettings() {
+    if (settingsDirty.stream) await saveStreamSettings(true);
+    if (settingsDirty.switcher) await saveObsConfig(true);
+    if (settingsDirty.general) await saveGeneralSettings(true);
+    if (settingsDirty.midi) await saveMidiDevice(true);
+  }
+
+  function requestCloseSettings() {
+    if (!anySettingsDirty()) {
+      toggleObsSettings(true);
+      return;
+    }
+    if (window.confirm("Save changes before closing Settings?")) {
+      saveAllDirtySettings().then(function () { toggleObsSettings(true); });
+    } else {
+      clearSettingsDirty();
+      toggleObsSettings(true);
+    }
+  }
+
+  function wireSettingsDirtyListeners() {
+    const map = [
+      ["stream", "stream1KeyInput"],
+      ["switcher", "obsHost"], ["switcher", "obsPort"], ["switcher", "obsHoldTime"],
+      ["general", "settingsCam1Ip"], ["general", "settingsCam2Ip"], ["general", "settingsPresetCount"],
+      ["midi", "midiDeviceSelect"]
+    ];
+    map.forEach(function (pair) {
+      const el = document.getElementById(pair[1]);
+      if (!el || el._dirtyWired) return;
+      el._dirtyWired = true;
+      const ev = el.tagName === "SELECT" ? "change" : "input";
+      el.addEventListener(ev, function () { markSettingsDirty(pair[0]); });
+    });
+  }
+
+
+  function status(cam, msg) {
+    // Command feedback removed from UI; ping uses setCameraOnline only.
+  }
+
+  function escHtml(s) {
+    return (s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;");
+  }
+
+  function setDot(cam, online) {
+    const dot = dom[cam + "Dot"];
+    if (!dot) return;
+    dot.classList.remove("online", "offline");
+    if (online === true) dot.classList.add("online");
+    if (online === false) dot.classList.add("offline");
+    const label = dom[cam + "Ip"];
+    if (label) {
+      label.textContent = online === true ? "Online" : online === false ? "Offline" : "Checking…";
+    }
+  }
+
+  async function loadCameraTitles() {
+    try {
+      if (!window.pywebview?.api?.get_camera_titles) return;
+      const [ok, titles] = await window.pywebview.api.get_camera_titles();
+      if (!ok || !titles) return;
+      const t1 = dom.cam1Title;
+      const t2 = dom.cam2Title;
+      if (t1) t1.textContent = (titles.cam1 && titles.cam1.trim()) ? titles.cam1.trim() : "Camera 1 Controls";
+      if (t2) t2.textContent = (titles.cam2 && titles.cam2.trim()) ? titles.cam2.trim() : "Camera 2 Controls";
+    } catch (e) {}
+  }
+
+  function updateSwitcherSettingsLabels(titles) {
+    if (!titles) return;
+    const ip1 = document.getElementById("settingsCam1IpLabel");
+    const ip2 = document.getElementById("settingsCam2IpLabel");
+    if (ip1) ip1.textContent = ((titles.cam1 && titles.cam1.trim()) ? titles.cam1.trim() : "Camera 1") + " IP:";
+    if (ip2) ip2.textContent = ((titles.cam2 && titles.cam2.trim()) ? titles.cam2.trim() : "Camera 2") + " IP:";
+  }
+
+  function setEditMode(cam, enabled) {
+    state[cam].edit = !!enabled;
+    const panel = dom[cam + "Panel"];
+    const titleEl = dom[cam + "Title"];
+    if (panel) panel.classList.toggle("editMode", state[cam].edit);
+    if (titleEl) {
+      if (enabled) {
+        titleEl.contentEditable = "true";
+        titleEl.focus();
+        titleEl._blurHandler = function () {
+          const val = (titleEl.textContent || "").trim();
+          if (window.pywebview?.api?.set_camera_title) {
+            window.pywebview.api.set_camera_title(cam, val || (cam === "cam1" ? "Camera 1 Controls" : "Camera 2 Controls"));
+            window.pywebview.api.get_camera_titles().then(function (res) {
+              if (res[0] && res[1]) updateSwitcherSettingsLabels(res[1]);
+            });
+          }
+        };
+        titleEl.addEventListener("blur", titleEl._blurHandler);
+      } else {
+        titleEl.removeEventListener("blur", titleEl._blurHandler);
+        titleEl._blurHandler = null;
+        titleEl.contentEditable = "false";
+        const val = (titleEl.textContent || "").trim();
+        if (window.pywebview?.api?.set_camera_title)
+          window.pywebview.api.set_camera_title(cam, val || (cam === "cam1" ? "Camera 1 Controls" : "Camera 2 Controls"));
+      }
+    }
+  }
+
+  function toggleEdit(cam) {
+    setEditMode(cam, !state[cam].edit);
+  }
+
+  const SIMPLE_PRESETS = [13, 14, 15, 16, 17, 18];
+
+  function isSimpleMode() {
+    return dom.top && dom.top.classList.contains("simpleMode");
+  }
+
+  function buildPresetUI(cam, labels) {
+    const host = dom[cam + "Presets"];
+    if (!host) return;
+    const simple = isSimpleMode();
+    const presets = simple ? SIMPLE_PRESETS : Array.from({ length: state.presetCount || 6 }, (_, i) => i + 1);
+    const count = presets.length;
+    host.classList.toggle("twoColumns", count > 6);
+    const fragment = document.createDocumentFragment();
+    for (let idx = 0; idx < count; idx++) {
+      const presetNum = presets[idx];
+      const label = labels?.[String(presetNum)] ?? "Preset " + presetNum;
+      const row = document.createElement("div");
+      row.className = "presetRow";
+      const recallBtn = document.createElement("button");
+      recallBtn.className = "presetBtn";
+      if (state[cam].activePreset === presetNum) recallBtn.classList.add("active");
+      recallBtn.innerHTML = escHtml(label);
+      recallBtn.onclick = () => presetRecall(cam, presetNum, label);
+      const saveBtn = document.createElement("button");
+      saveBtn.className = "miniBtn primary editOnly";
+      saveBtn.textContent = "Save";
+      saveBtn.onclick = () => presetSave(cam, presetNum);
+      const renameBtn = document.createElement("button");
+      renameBtn.className = "miniBtn editOnly";
+      renameBtn.textContent = "Rename";
+      renameBtn.onclick = () => renamePreset(cam, presetNum, label);
+      row.appendChild(recallBtn);
+      row.appendChild(saveBtn);
+      row.appendChild(renameBtn);
+      fragment.appendChild(row);
+    }
+    host.innerHTML = "";
+    host.appendChild(fragment);
+    setEditMode(cam, state[cam].edit);
+  }
+
+  async function loadPresetLabelsSafe(cam) {
+    try {
+      if (!window.pywebview?.api?.get_preset_labels) return null;
+      const [ok, resp] = await window.pywebview.api.get_preset_labels(cam);
+      return ok ? resp : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function loadSimplePresetLabelsSafe(cam) {
+    try {
+      if (!window.pywebview?.api?.get_simple_preset_labels) return null;
+      const [ok, resp] = await window.pywebview.api.get_simple_preset_labels(cam);
+      return ok ? resp : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function loadPresetLabelsForMode(cam) {
+    return isSimpleMode() ? loadSimplePresetLabelsSafe(cam) : loadPresetLabelsSafe(cam);
+  }
+
+  async function refreshLabelsWithRetry(cam, tries = 10) {
+    for (let i = 0; i < tries; i++) {
+      const labels = await loadPresetLabelsForMode(cam);
+      if (labels) {
+        buildPresetUI(cam, labels);
+        return true;
+      }
+      await new Promise(r => setTimeout(r, 250));
+    }
+    return false;
+  }
+
+  async function renamePreset(cam, preset, currentLabel) {
+    const next = prompt("Rename preset " + preset + ":", currentLabel);
+    if (next === null) return;
+
+    try {
+      const [ok, resp] = await window.pywebview.api.set_preset_label(cam, preset, next);
+      if (!ok) return status(cam, "Rename error: " + resp);
+      buildPresetUI(cam, resp);
+      status(cam, "Preset " + preset + " renamed ✓");
+    } catch (e) {
+      status(cam, "Rename error: " + e);
+    }
+  }
+
+  function updateTrackingButtons(cam) {
+    const onBtn = document.getElementById(cam + "TrackingOn");
+    const offBtn = document.getElementById(cam + "TrackingOff");
+    if (!onBtn || !offBtn) return;
+    const on = state[cam].trackingOn === true;
+    onBtn.classList.toggle("danger", on);
+    onBtn.classList.toggle("ghost", !on);
+    offBtn.classList.toggle("danger", !on);
+    offBtn.classList.toggle("ghost", on);
+    const panel = dom[cam + "Panel"];
+    if (panel) panel.classList.toggle("trackingOn", on);
+  }
+
+  function updateFocusButtons(cam) {
+    const onBtn = document.getElementById(cam + "FocusOn");
+    const offBtn = document.getElementById(cam + "FocusOff");
+    if (!onBtn || !offBtn) return;
+    const on = state[cam].focusOn === true;
+    onBtn.classList.toggle("primary", on);
+    onBtn.classList.toggle("ghost", !on);
+    offBtn.classList.toggle("primary", !on);
+    offBtn.classList.toggle("ghost", on);
+  }
+
+  async function ensureTrackingOff(cam) {
+    try {
+      if (!window.pywebview?.api?.tracking_off) return false;
+      const [ok] = await window.pywebview.api.tracking_off(cam);
+      if (ok) {
+        state[cam].trackingOn = false;
+        updateTrackingButtons(cam);
+      }
+      return !!ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function fetchTrackingStatus(cam) {
+    try {
+      if (!window.pywebview?.api?.get_tracking_status) return;
+      const [ok, value] = await window.pywebview.api.get_tracking_status(cam);
+      if (ok && value !== undefined && value !== null) {
+        state[cam].trackingOn = !!value;
+        updateTrackingButtons(cam);
+      }
+    } catch (e) {}
+  }
+
+  async function fetchFocusStatus(cam) {
+    try {
+      if (!window.pywebview?.api?.get_focus_status) return;
+      const [ok, value] = await window.pywebview.api.get_focus_status(cam);
+      if (ok && value !== undefined && value !== null) {
+        state[cam].focusOn = !!value;
+        updateFocusButtons(cam);
+      }
+    } catch (e) {}
+  }
+
+  async function trackingOn(cam) {
+    status(cam, "Turning tracking ON...");
+    const [ok, resp] = await window.pywebview.api.tracking_on(cam);
+    if (ok) {
+      state[cam].trackingOn = true;
+      updateTrackingButtons(cam);
+    }
+    status(cam, ok ? "Tracking ON ✓" : ("Error: " + resp));
+  }
+
+  async function trackingOff(cam) {
+    status(cam, "Turning tracking OFF...");
+    const [ok, resp] = await window.pywebview.api.tracking_off(cam);
+    if (ok) {
+      state[cam].trackingOn = false;
+      updateTrackingButtons(cam);
+    }
+    status(cam, ok ? "Tracking OFF ✓" : ("Error: " + resp));
+  }
+
+  async function focusOn(cam) {
+    status(cam, "Auto focus ON...");
+    const [ok, resp] = await window.pywebview.api.focus_on(cam);
+    if (ok) {
+      state[cam].focusOn = true;
+      updateFocusButtons(cam);
+    }
+    status(cam, ok ? "Auto focus ON ✓" : ("Error: " + resp));
+  }
+
+  async function focusOff(cam) {
+    status(cam, "Auto focus OFF...");
+    const [ok, resp] = await window.pywebview.api.focus_off(cam);
+    if (ok) {
+      state[cam].focusOn = false;
+      updateFocusButtons(cam);
+    }
+    status(cam, ok ? "Auto focus OFF ✓" : ("Error: " + resp));
+  }
+
+  async function presetRecall(cam, preset, label) {
+    const displayLabel = (label != null && String(label).trim()) ? String(label).trim() : ("Preset " + preset);
+    status(cam, "Recalling...");
+    const [ok, resp] = await window.pywebview.api.preset_recall(cam, parseInt(preset));
+    if (ok) {
+      state[cam].activePreset = preset;
+      const labels = await loadPresetLabelsForMode(cam);
+      buildPresetUI(cam, labels);
+      status(cam, displayLabel + " Preset Recalled ✓");
+    } else {
+      status(cam, "Error: " + resp);
+    }
+  }
+
+  async function presetSave(cam, preset) {
+    status(cam, `Saving preset ${preset}...`);
+    const [ok, resp] = await window.pywebview.api.preset_save(cam, parseInt(preset));
+    status(cam, ok ? `Preset ${preset} saved ✓` : ("Error: " + resp));
+  }
+
+  // -------- Speed slider logic --------
+  function getSpeed(cam){
+    const el = dom[cam + "Speed"];
+    const pct = el ? parseInt(el.value || "60", 10) : 60;
+    const speed = Math.max(1, Math.min(10, Math.round((pct / 100) * 9) + 1));
+    return { pct, speed };
+  }
+
+  function saveSpeedDebounced(cam){
+    if (!window.pywebview?.api?.set_speed_pct) return;
+    const el = dom[cam + "Speed"];
+    if (!el) return;
+    const pct = parseInt(el.value || "60", 10);
+
+    if (speedSaveTimers[cam]) clearTimeout(speedSaveTimers[cam]);
+    speedSaveTimers[cam] = setTimeout(async () => {
+      try { await window.pywebview.api.set_speed_pct(cam, pct); } catch(e) {}
+    }, 250);
+  }
+
+  function speedChanged(cam){
+    const { pct } = getSpeed(cam);
+    const pctEl = dom[cam + "SpeedPct"];
+    if (pctEl) pctEl.textContent = pct + "%";
+    saveSpeedDebounced(cam);
+  }
+
+  async function loadSavedSpeed(cam){
+    try{
+      if (!window.pywebview?.api?.get_speed_pct) return;
+      const [ok, pct] = await window.pywebview.api.get_speed_pct(cam);
+      if (!ok) return;
+      const el = dom[cam + "Speed"];
+      if (el) el.value = String(pct);
+      speedChanged(cam);
+    }catch(e){}
+  }
+
+  // -------- PTZ --------
+  async function ptzDown(cam, direction) {
+    const { speed } = getSpeed(cam);
+    const [ok, resp] = await window.pywebview.api.ptz_move(cam, direction, speed);
+    if (!ok) status(cam, "PTZ Error: " + resp);
+  }
+
+  async function ptzUp(cam) {
+    const { speed } = getSpeed(cam);
+    const [ok, resp] = await window.pywebview.api.ptz_move(cam, "stop", speed);
+    if (!ok) status(cam, "PTZ Error: " + resp);
+  }
+
+  async function focusDown(cam, direction) {
+    const { speed } = getSpeed(cam);
+    const api = window.pywebview?.api;
+    if (api?.focus_manual) {
+      const [ok, resp] = await api.focus_manual(cam, direction, speed);
+      if (!ok) status(cam, "Focus: " + resp);
+      return;
+    }
+    const [ok, resp] = await api.ptz_move(cam, direction, speed);
+    if (!ok) status(cam, "Focus: " + resp);
+  }
+
+  async function focusUp(cam) {
+    const { speed } = getSpeed(cam);
+    const api = window.pywebview?.api;
+    if (api?.focus_manual) {
+      const [ok, resp] = await api.focus_manual(cam, "focus_stop", speed);
+      if (!ok) status(cam, "Focus stop: " + resp);
+      return;
+    }
+    const [ok, resp] = await api.ptz_move(cam, "stop", speed);
+    if (!ok) status(cam, "Focus stop: " + resp);
+  }
+
+  // -------- Switching Hold Time: lock controls for camera that became live --------
+  function applyLock(cam) {
+    const other = cam === "cam1" ? "cam2" : "cam1";
+    state.lockControlsUntil[other] = 0;
+    const otherPanel = dom[other + "Panel"];
+    if (otherPanel) otherPanel.classList.remove("controlsLocked");
+    const hold = (state.obsConfig && state.obsConfig.switching_hold_seconds) ? Math.max(0, Math.min(5, state.obsConfig.switching_hold_seconds)) : 0;
+    if (hold <= 0) return;
+    state.lockControlsUntil[cam] = Date.now() + hold * 1000;
+    const panel = dom[cam + "Panel"];
+    if (panel) panel.classList.add("controlsLocked");
+  }
+
+  function updateLockState() {
+    const now = Date.now();
+    for (const cam of ["cam1", "cam2"]) {
+      if (state.lockControlsUntil[cam] > 0 && now >= state.lockControlsUntil[cam]) {
+        state.lockControlsUntil[cam] = 0;
+        const panel = dom[cam + "Panel"];
+        if (panel) panel.classList.remove("controlsLocked");
+      }
+    }
+  }
+
+  // -------- OBS Status & Control --------
+  function updateObsBar(cam, obsStatus) {
+    const bar = dom[cam + "ObsBar"];
+    const label = dom[cam + "ObsLabel"];
+    const cutBtn = dom[cam + "CutBtn"];
+    const connectingEl = dom[cam + "ObsConnecting"];
+    const connectedEl = dom[cam + "ObsConnected"];
+    if (!bar || !label) return;
+
+    if (!obsStatus || !obsStatus.connected) {
+      bar.className = "obsBar disconnected";
+      label.textContent = "Switcher: Disconnected";
+      obsConnectedShown[cam] = false;
+      if (obsConnectedHideTimers[cam]) { clearTimeout(obsConnectedHideTimers[cam]); obsConnectedHideTimers[cam] = null; }
+      if (connectingEl) connectingEl.style.display = "inline-flex";
+      if (connectedEl) connectedEl.style.display = "none";
+      if (cutBtn) cutBtn.style.display = "none";
+      return;
+    }
+
+    const camStatus = obsStatus.cams?.[cam] || { program: false, preview: false };
+
+    if (connectingEl) connectingEl.style.display = "none";
+    if (cutBtn) cutBtn.style.display = "inline-block";
+    if (!obsConnectedShown[cam]) {
+      obsConnectedShown[cam] = true;
+      if (connectedEl) connectedEl.style.display = "inline-flex";
+      if (obsConnectedHideTimers[cam]) clearTimeout(obsConnectedHideTimers[cam]);
+      obsConnectedHideTimers[cam] = setTimeout(function () {
+        obsConnectedHideTimers[cam] = null;
+        const el = dom[cam + "ObsConnected"];
+        if (el) el.style.display = "none";
+      }, 3000);
+    } else {
+      if (connectedEl) connectedEl.style.display = "none";
+    }
+
+    if (camStatus.program) {
+      state.currentLiveCam = cam;
+      bar.className = "obsBar program";
+      label.textContent = obsStatus.splitviewOn
+        ? "Switcher: LIVE (Splitview)"
+        : "Switcher: LIVE (Program)";
+    } else if (camStatus.preview) {
+      bar.className = "obsBar preview";
+      label.textContent = "Switcher: Preview (PVW)";
+    } else {
+      bar.className = "obsBar none";
+      label.textContent = "Switcher: Ready";
+    }
+  }
+
+  async function pollObsStatus() {
+    try {
+      updateLockState();
+      if (!window.pywebview?.api?.obs_get_status) return;
+      const [ok, obsStatus] = await window.pywebview.api.obs_get_status();
+      if (ok && obsStatus) {
+        const connected = !!obsStatus.connected;
+        if (connected && !switcherWasConnected) {
+          switcherWasConnected = true;
+          if (api.configure_multisource_layout) {
+            api.configure_multisource_layout();
+          }
+        }
+        if (!connected) switcherWasConnected = false;
+        updateObsBar("cam1", obsStatus);
+        updateObsBar("cam2", obsStatus);
+        updateStreamControls(obsStatus);
+        const streamPanel = document.getElementById("settingsTabPanelStream");
+        if (streamPanel && streamPanel.classList.contains("active")) refreshStreamStatus();
+      }
+    } catch (e) {
+      // Silent fail
+    }
+  }
+
+  function applySimpleMode(on) {
+    const top = dom.top;
+    if (top) top.classList.toggle("simpleMode", !!on);
+    if (state.obsConfig) state.obsConfig.simple_mode = !!on;
+    if (dom.obsSimpleModeToggle) {
+      dom.obsSimpleModeToggle.classList.toggle("on", !!on);
+      dom.obsSimpleModeToggle.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    setEditMode("cam1", false);
+    setEditMode("cam2", false);
+    if (on) {
+      (async function() {
+        try {
+          if (window.pywebview?.api?.focus_on) {
+            await window.pywebview.api.focus_on("cam1").catch(function() {});
+            await window.pywebview.api.focus_on("cam2").catch(function() {});
+            state.cam1.focusOn = true;
+            state.cam2.focusOn = true;
+            updateFocusButtons("cam1");
+            updateFocusButtons("cam2");
+          }
+          if (window.pywebview?.api?.tracking_off) {
+            await window.pywebview.api.tracking_off("cam1").catch(function() {});
+            await window.pywebview.api.tracking_off("cam2").catch(function() {});
+            state.cam1.trackingOn = false;
+            state.cam2.trackingOn = false;
+            updateTrackingButtons("cam1");
+            updateTrackingButtons("cam2");
+          }
+        } catch (e) {}
+        for (const cam of ["cam1", "cam2"]) {
+          const labels = await loadPresetLabelsForMode(cam);
+          if (labels) buildPresetUI(cam, labels);
+        }
+      })();
+    } else {
+      (async function() {
+        for (const cam of ["cam1", "cam2"]) {
+          const labels = await loadPresetLabelsForMode(cam);
+          if (labels) buildPresetUI(cam, labels);
+        }
+      })();
+    }
+  }
+
+  function onSimpleModeToggleClick() {
+    const el = dom.obsSimpleModeToggle;
+    if (!el) return;
+    const on = !el.classList.contains("on");
+    markSettingsDirty("general");
+    applySimpleMode(on);
+    if (window.pywebview?.api?.set_obs_simple_mode) {
+      window.pywebview.api.set_obs_simple_mode(on).catch(function() {});
+    }
+  }
+
+  async function simpleModeSwitch() {
+    const other = state.currentLiveCam === "cam1" ? "cam2" : "cam1";
+    try {
+      if (!window.pywebview?.api?.obs_cut) return;
+      status(other, "Switching...");
+      const [ok, resp] = await window.pywebview.api.obs_cut(other);
+      status(other, ok ? "Switch ✓" : ("Error: " + resp));
+      if (ok) applyLock(other);
+      setTimeout(pollObsStatus, 300);
+    } catch (e) {
+      status(other, "Switch error: " + e);
+    }
+  }
+
+  function streamKeyConfigured(st) {
+    if (!st) return false;
+    const key = st.stream1Key != null ? st.stream1Key : "";
+    return !!String(key).trim();
+  }
+
+  function formatStreamBarStatus(st) {
+    if (!st) return "Status unavailable";
+    if (!st.connected) return "Switcher not connected";
+    const keySet = streamKeyConfigured(st);
+    if (st.streamLive) {
+      return keySet ? "Live on Stream 1" : "Live — stream key not set";
+    }
+    return keySet ? "Offline — ready to go live" : "Offline — stream key not set";
+  }
+
+  function updateStreamBarStatus(st) {
+    const el = dom.streamBarStatus || document.getElementById("streamBarStatus");
+    if (!el) return;
+    el.value = formatStreamBarStatus(st);
+    el.classList.remove("live", "offline", "warn");
+    if (!st || !st.connected) {
+      el.classList.add("warn");
+    } else if (st.streamLive) {
+      el.classList.add("live");
+    } else {
+      el.classList.add("offline");
+    }
+  }
+
+  function updateStillButtons(stillIndex) {
+    const idx = stillIndex == null ? null : parseInt(stillIndex, 10);
+    [dom.stillSidBtn, dom.stillNateBtn, dom.stillCecilBtn].forEach(function (btn) {
+      if (btn) btn.classList.remove("on");
+    });
+    if (!idx || idx < 1 || idx > 3) return;
+    const activeBtn = idx === 1 ? dom.stillSidBtn : (idx === 2 ? dom.stillNateBtn : dom.stillCecilBtn);
+    if (activeBtn) activeBtn.classList.add("on");
+  }
+
+  function updateStreamControls(obsStatus) {
+    const isLive = !!(obsStatus && obsStatus.streamLive);
+    const liveBtn = dom.streamGoLiveBtn;
+    if (liveBtn) liveBtn.classList.toggle("on", isLive);
+    const stopBtn = dom.streamStopBtn;
+    if (stopBtn) {
+      stopBtn.disabled = !isLive;
+      stopBtn.classList.toggle("on", isLive);
+      stopBtn.setAttribute("aria-disabled", isLive ? "false" : "true");
+    }
+    const uskOn = !!(obsStatus && obsStatus.usk1On);
+    const dskOn = !!(obsStatus && obsStatus.dsk1On);
+    if (dom.usk1OnBtn) {
+      dom.usk1OnBtn.classList.toggle("on", uskOn);
+    }
+    if (dom.usk1OffBtn) {
+      dom.usk1OffBtn.classList.remove("on");
+      dom.usk1OffBtn.classList.toggle("offActive", !uskOn);
+    }
+    if (dom.dsk1OnBtn) {
+      dom.dsk1OnBtn.classList.toggle("on", dskOn);
+    }
+    if (dom.dsk1OffBtn) {
+      dom.dsk1OffBtn.classList.remove("on");
+      dom.dsk1OffBtn.classList.toggle("offActive", !dskOn);
+    }
+    if (dom.splitviewOnBtn) dom.splitviewOnBtn.classList.toggle("on", !!(obsStatus && obsStatus.splitviewOn));
+    if (dom.splitviewOffBtn) dom.splitviewOffBtn.classList.toggle("on", !!(obsStatus && !obsStatus.splitviewOn));
+    updateStillButtons(obsStatus && obsStatus.mp1StillIndex);
+    updateStreamBarStatus(obsStatus);
+    const streamPanel = document.getElementById("settingsTabPanelStream");
+    if (streamPanel && streamPanel.classList.contains("active")) refreshStreamStatus();
+  }
+
+  async function streamGoLive() {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_stream_go_live) return;
+      const [ok, resp] = await api.switcher_stream_go_live();
+      showStreamToast(ok ? "Go Live ✓" : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) {
+        if (window.pywebview?.api?.obs_get_status) {
+          const [stOk, st] = await api.obs_get_status();
+          if (stOk && st) updateStreamControls(Object.assign({}, st, { streamLive: true }));
+        }
+        setTimeout(pollObsStatus, 400);
+      }
+    } catch (e) {
+      showStreamToast("Go Live error: " + e, "error");
+    }
+  }
+
+  let streamStopConfirmOpen = false;
+
+  function openStreamStopConfirm() {
+    const overlay = document.getElementById("streamStopConfirm");
+    if (!overlay) return;
+    overlay.classList.add("open");
+    overlay.setAttribute("aria-hidden", "false");
+    streamStopConfirmOpen = true;
+    const cancelBtn = document.getElementById("streamStopConfirmCancel");
+    if (cancelBtn) cancelBtn.focus();
+  }
+
+  function closeStreamStopConfirm() {
+    const overlay = document.getElementById("streamStopConfirm");
+    if (!overlay) return;
+    overlay.classList.remove("open");
+    overlay.setAttribute("aria-hidden", "true");
+    streamStopConfirmOpen = false;
+  }
+
+  function requestStreamStop() {
+    const stopBtn = dom.streamStopBtn;
+    if (stopBtn && stopBtn.disabled) return;
+    openStreamStopConfirm();
+  }
+
+  async function confirmStreamStop() {
+    closeStreamStopConfirm();
+    await streamStop();
+  }
+
+  async function streamStop() {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_stream_stop) return;
+      const [ok, resp] = await api.switcher_stream_stop();
+      showStreamToast(ok ? "Stream stopped ✓" : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) setTimeout(pollObsStatus, 300);
+    } catch (e) {
+      showStreamToast("Stop error: " + e, "error");
+    }
+  }
+
+  async function usk1On() {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_usk1_on) return;
+      const [ok, resp] = await api.switcher_usk1_on();
+      showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) setTimeout(pollObsStatus, 300);
+    } catch (e) { showStreamToast("Lyrics error: " + e, "error"); }
+  }
+  async function usk1Off() {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_usk1_off) return;
+      const [ok, resp] = await api.switcher_usk1_off();
+      showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) setTimeout(pollObsStatus, 300);
+    } catch (e) { showStreamToast("Lyrics error: " + e, "error"); }
+  }
+  async function dsk1On() {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_dsk1_on) return;
+      const [ok, resp] = await api.switcher_dsk1_on();
+      showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) setTimeout(pollObsStatus, 300);
+    } catch (e) { showStreamToast("Title error: " + e, "error"); }
+  }
+  async function dsk1Off() {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_dsk1_off) return;
+      const [ok, resp] = await api.switcher_dsk1_off();
+      showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) setTimeout(pollObsStatus, 300);
+    } catch (e) { showStreamToast("Title error: " + e, "error"); }
+  }
+
+  async function splitviewOn() {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_splitview_on) return;
+      const [ok, resp] = await api.switcher_splitview_on();
+      showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) setTimeout(pollObsStatus, 400);
+    } catch (e) {
+      showStreamToast("Splitview error: " + e, "error");
+    }
+  }
+
+  async function splitviewOff() {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_splitview_off) return;
+      const [ok, resp] = await api.switcher_splitview_off();
+      showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) setTimeout(pollObsStatus, 400);
+    } catch (e) {
+      showStreamToast("Splitview error: " + e, "error");
+    }
+  }
+
+  async function activateStill(stillIndex) {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_activate_still) return;
+      const [ok, resp] = await api.switcher_activate_still(stillIndex);
+      showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) updateStillButtons(stillIndex);
+    } catch (e) {
+      showStreamToast("Still error: " + e, "error");
+    }
+  }
+
+  async function loadStreamSettings() {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_get_stream1_key) return;
+      const [ok, key] = await api.switcher_get_stream1_key();
+      if (ok && dom.stream1KeyInput) dom.stream1KeyInput.value = key || "";
+    } catch (e) {}
+  }
+
+  async function saveStreamSettings(fromHeader) {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_set_stream1_key) return;
+      const key = dom.stream1KeyInput ? dom.stream1KeyInput.value : "";
+      const [ok, resp] = await api.switcher_set_stream1_key(key);
+      showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) {
+        clearSettingsDirty("stream");
+        refreshStreamStatus();
+        if (!fromHeader) showStreamToast(resp + " ✓", "ok");
+      }
+    } catch (e) {
+      showStreamToast("Save stream key error: " + e, "error");
+    }
+  }
+
+  async function obsCut(cam) {
+    try {
+      if (!window.pywebview?.api?.obs_cut) return;
+      status(cam, "Cutting to camera...");
+      const [ok, resp] = await window.pywebview.api.obs_cut(cam);
+      status(cam, ok ? "Cut successful ✓" : ("Cut error: " + resp));
+      if (ok) applyLock(cam);
+      setTimeout(pollObsStatus, 300);
+    } catch (e) {
+      status(cam, "Cut error: " + e);
+    }
+  }
+
+
+  const SPLASH_MAX_MS = 10000;
+  const SPLASH_MIN_STEP_MS = 1000;
+
+  function waitUntil(ts) {
+    const delay = ts - Date.now();
+    if (delay <= 0) return Promise.resolve();
+    return new Promise(function (resolve) { window.setTimeout(resolve, delay); });
+  }
+
+  let welcomeInfoOpen = false;
+  let updatePromptDismissedThisSession = false;
+  let updateConfirmOpen = false;
+
+  function waitForWelcomeClosed() {
+    return new Promise(function (resolve) {
+      function tick() {
+        const overlay = document.getElementById("welcomeInfo");
+        const open = welcomeInfoOpen || (overlay && overlay.classList.contains("open"));
+        if (!open) { resolve(); return; }
+        window.setTimeout(tick, 200);
+      }
+      tick();
+    });
+  }
+
+  function openUpdateConfirm(st) {
+    const overlay = document.getElementById("updateConfirm");
+    const msg = document.getElementById("updateConfirmMessage");
+    if (!overlay) return;
+    const cur = (st && st.current) ? st.current : "?";
+    const lat = (st && st.latest) ? st.latest : "?";
+    let text = "Version " + cur + " \u2192 " + lat;
+    if (st && st.notes) text += "\n\n" + st.notes;
+    if (msg) msg.textContent = text;
+    overlay.classList.add("open");
+    overlay.setAttribute("aria-hidden", "false");
+    updateConfirmOpen = true;
+  }
+
+  function closeUpdateConfirm() {
+    const overlay = document.getElementById("updateConfirm");
+    if (!overlay) return;
+    overlay.classList.remove("open");
+    overlay.setAttribute("aria-hidden", "true");
+    updateConfirmOpen = false;
+    const btn = document.getElementById("updateConfirmNow");
+    if (btn) { btn.disabled = false; btn.textContent = "Update now"; }
+  }
+
+  function dismissUpdateConfirm() {
+    updatePromptDismissedThisSession = true;
+    closeUpdateConfirm();
+  }
+
+  async function confirmUpdateNow() {
+    const api = window.pywebview?.api;
+    const btn = document.getElementById("updateConfirmNow");
+    if (!api?.download_and_apply_update) return;
+    if (btn) { btn.disabled = true; btn.textContent = "Downloading\u2026"; }
+    try {
+      const [ok, resp] = await api.download_and_apply_update();
+      if (!ok) {
+        showStreamToast(resp || "Update failed", "error");
+        if (btn) { btn.disabled = false; btn.textContent = "Update now"; }
+        return;
+      }
+      showStreamToast(resp || "Restarting\u2026", "ok");
+    } catch (e) {
+      showStreamToast("Update error: " + e, "error");
+      if (btn) { btn.disabled = false; btn.textContent = "Update now"; }
+    }
+  }
+
+  async function maybeCheckForUpdate() {
+    if (updatePromptDismissedThisSession) return;
+    const api = window.pywebview?.api;
+    if (!api?.check_for_update) return;
+    try {
+      const cfg = state.obsConfig || {};
+      if (cfg.update_check_enabled === false) return;
+      const [ok, st] = await api.check_for_update();
+      if (!ok || !st || !st.update_available) return;
+      openUpdateConfirm(st);
+    } catch (e) {}
+  }
+
+  async function runPostStartupUi() {
+    await runStartupSequence();
+    await waitForWelcomeClosed();
+    await maybeCheckForUpdate();
+  }
+
+  async function onShowUpdateCheckToggleClick() {
+    const el = document.getElementById("showUpdateCheckToggle");
+    if (!el) return;
+    const on = !el.classList.contains("on");
+    el.classList.toggle("on", on);
+    el.setAttribute("aria-pressed", on ? "true" : "false");
+    if (state.obsConfig) state.obsConfig.update_check_enabled = on;
+    markSettingsDirty("general");
+    await persistUiPrefs({ update_check_enabled: on });
+  }
+
+
+  function openWelcomeInfo() {
+    const overlay = document.getElementById("welcomeInfo");
+    if (!overlay) return;
+    overlay.classList.add("open");
+    overlay.setAttribute("aria-hidden", "false");
+    welcomeInfoOpen = true;
+  }
+
+  function closeWelcomeInfo() {
+    const overlay = document.getElementById("welcomeInfo");
+    if (!overlay) return;
+    overlay.classList.remove("open");
+    overlay.setAttribute("aria-hidden", "true");
+    welcomeInfoOpen = false;
+    if (state.obsConfig) state.obsConfig.keyboard_hints_dismissed = true;
+    persistUiPrefs({ keyboard_hints_dismissed: true });
+  }
+
+  function dismissStartupSplash() {
+    const splash = document.getElementById("startupSplash");
+    if (!splash || splash.classList.contains("fade-out")) return;
+    splash.classList.add("fade-out");
+    splash.setAttribute("aria-busy", "false");
+    window.setTimeout(function () {
+      if (splash.parentNode) splash.parentNode.removeChild(splash);
+      if (!state.obsConfig || !state.obsConfig.keyboard_hints_dismissed) {
+        openWelcomeInfo();
+      }
+    }, 560);
+  }
+
+  function renderStartupStepRow(step, state) {
+    const li = document.createElement("li");
+    li.className = "startupStep " + state;
+    li.setAttribute("data-step-id", step.id);
+    const icon = document.createElement("span");
+    icon.className = "startupStepIcon";
+    if (state === "active") {
+      const sp = document.createElement("span");
+      sp.className = "stepSpinner";
+      sp.setAttribute("aria-hidden", "true");
+      icon.appendChild(sp);
+    } else if (state === "done") {
+      icon.innerHTML = '<span class="stepCheck" aria-hidden="true">&#10003;</span>';
+    } else if (state === "warn" || state === "skipped") {
+      icon.innerHTML = '<span class="stepWarn" aria-hidden="true">!</span>';
+    } else {
+      icon.innerHTML = '<span class="stepPending" aria-hidden="true"></span>';
+    }
+    const label = document.createElement("span");
+    label.className = "startupStepLabel";
+    label.textContent = step.label;
+    li.appendChild(icon);
+    li.appendChild(label);
+    if ((state === "warn" || state === "skipped") && step.settingsTab) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "startupStepAction";
+      btn.textContent = "Open Settings";
+      btn.onclick = function (ev) {
+        ev.stopPropagation();
+        openSettingsToTab(step.settingsTab);
+      };
+      li.appendChild(btn);
+    }
+    return li;
+  }
+
+  function renderStartupSteps(steps) {
+    const ul = document.getElementById("startupSteps");
+    if (!ul) return;
+    ul.innerHTML = "";
+    steps.forEach(function (step) {
+      ul.appendChild(renderStartupStepRow(step, "pending"));
+    });
+  }
+
+  function setStartupStepState(stepId, state) {
+    const ul = document.getElementById("startupSteps");
+    if (!ul) return;
+    const li = ul.querySelector('[data-step-id="' + stepId + '"]');
+    if (!li) return;
+    const label = li.querySelector(".startupStepLabel");
+    const labelText = label ? label.textContent : "";
+    const meta = (startupStepsList || []).find(function (s) { return s.id === stepId; });
+    const step = { id: stepId, label: labelText, settingsTab: meta ? meta.settingsTab : STARTUP_STEP_SETTINGS_TAB[stepId] };
+    const fresh = renderStartupStepRow(step, state);
+    li.replaceWith(fresh);
+  }
+
+  function markRemainingStartupSteps(steps, fromIndex, state) {
+    for (let i = fromIndex; i < steps.length; i++) {
+      setStartupStepState(steps[i].id, state || "skipped");
+    }
+  }
+
+  let startupStepsList = [];
+
+  function buildStartupSteps() {
+    const steps = [
+      {
+        id: "cam1",
+        settingsTab: "general",
+        label: "Connecting to Camera 1",
+        run: async function () {
+          const api = window.pywebview?.api;
+          if (!api?.camera_ping) return false;
+          const [ok] = await api.camera_ping("cam1");
+          return !!ok;
+        }
+      },
+      {
+        id: "cam2",
+        settingsTab: "general",
+        label: "Connecting to Camera 2",
+        run: async function () {
+          const api = window.pywebview?.api;
+          if (!api?.camera_ping) return false;
+          const [ok] = await api.camera_ping("cam2");
+          return !!ok;
+        }
+      },
+      {
+        id: "switcher",
+        settingsTab: "switcher",
+        label: "Connecting to Switcher",
+        run: async function () {
+          const api = window.pywebview?.api;
+          if (!api) return false;
+          if (api.startup_wait_switcher) {
+            const [ok, connected] = await api.startup_wait_switcher(3.0);
+            return !!(ok && connected);
+          }
+          if (api.obs_get_status) {
+            const deadline = Date.now() + 3000;
+            while (Date.now() < deadline) {
+              const [stOk, st] = await api.obs_get_status();
+              if (stOk && st && st.connected) return true;
+              await new Promise(function (r) { window.setTimeout(r, 250); });
+            }
+          }
+          return false;
+        }
+      }
+    ];
+    const cfg = state.obsConfig || {};
+    steps.push({
+      id: "usk",
+      settingsTab: "switcher",
+      label: "Verifying Upstream Key Settings",
+      run: async function () {
+        const api = window.pywebview?.api;
+        if (!api?.apply_usk1_defaults) return false;
+        const [ok] = await api.apply_usk1_defaults();
+        return !!ok;
+      }
+    });
+    steps.push({
+      id: "multisource",
+      settingsTab: "switcher",
+      label: "Configuring Multisource Layout",
+      run: async function () {
+        const api = window.pywebview?.api;
+        if (!api?.configure_multisource_layout) return false;
+        const [ok] = await api.configure_multisource_layout();
+        return !!ok;
+      }
+    });
+    steps.push({
+      id: "dsk",
+      settingsTab: "switcher",
+      label: "Setting Downstream Key to Still 1",
+      run: async function () {
+        const api = window.pywebview?.api;
+        if (!api?.apply_dsk1_defaults) return false;
+        const [ok] = await api.apply_dsk1_defaults();
+        return !!ok;
+      }
+    });
+    steps.push({
+      id: "streamui",
+        settingsTab: "stream",
+      label: "Reading Lyrics, Title & Still Status",
+      run: async function () {
+        const api = window.pywebview?.api;
+        if (!api?.switcher_refresh_stream_ui) return false;
+        const [ok, st] = await api.switcher_refresh_stream_ui();
+        if (ok && st) updateStreamControls(st);
+        return !!ok;
+      }
+    });
+    startupStepsList = steps;
+    return steps;
+  }
+
+  async function loadObsConfigEarly() {
+    try {
+      if (!window.pywebview?.api?.get_obs_config) return;
+      const [ok, config] = await window.pywebview.api.get_obs_config();
+      if (ok && config) state.obsConfig = config;
+    } catch (e) {}
+  }
+
+  async function runStartupSequence() {
+    await loadObsConfigEarly();
+    const deadline = Date.now() + SPLASH_MAX_MS;
+    const steps = buildStartupSteps();
+    renderStartupSteps(steps);
+
+    for (let i = 0; i < steps.length; i++) {
+      if (Date.now() >= deadline) {
+        markRemainingStartupSteps(steps, i, "skipped");
+        break;
+      }
+      const step = steps[i];
+      const t0 = Date.now();
+      setStartupStepState(step.id, "active");
+      let ok = false;
+      try {
+        ok = await step.run();
+      } catch (e) {
+        ok = false;
+      }
+      await waitUntil(t0 + SPLASH_MIN_STEP_MS);
+      if (Date.now() >= deadline) {
+        setStartupStepState(step.id, ok ? "done" : "warn");
+        markRemainingStartupSteps(steps, i + 1, "skipped");
+        break;
+      }
+      setStartupStepState(step.id, ok ? "done" : "warn");
+    }
+
+    const initPromise = init();
+    const remaining = deadline - Date.now();
+    if (remaining > 0) {
+      await Promise.race([
+        initPromise,
+        new Promise(function (r) { window.setTimeout(r, remaining); })
+      ]);
+    }
+    initPromise.catch(function (e) { console.error("init error:", e); });
+    dismissStartupSplash();
+  }
+
+  const VALID_SETTINGS_TABS = ["stream", "switcher", "general", "midi"];
+
+  function normalizeSettingsTab(tab) {
+    return VALID_SETTINGS_TABS.includes(tab) ? tab : "stream";
+  }
+
+  async function persistUiPrefs(prefs) {
+    if (!prefs || !window.pywebview?.api?.set_obs_ui_prefs) return;
+    try {
+      const [ok] = await window.pywebview.api.set_obs_ui_prefs(prefs);
+      if (ok && state.obsConfig) {
+        if ("keyboard_hints_dismissed" in prefs) {
+          state.obsConfig.keyboard_hints_dismissed = !!prefs.keyboard_hints_dismissed;
+        }
+        if ("settings_last_tab" in prefs) {
+          state.obsConfig.settings_last_tab = normalizeSettingsTab(prefs.settings_last_tab);
+        }
+      }
+    } catch (e) {}
+  }
+
+
+
+  function buildStreamStatusHtml(st) {
+    const keySet = streamKeyConfigured(st);
+    const conn = st.connected
+      ? '<b>Switcher:</b> Connected'
+      : '<b>Switcher:</b> <span class="warnLine">Not connected</span> (check IP on Switcher tab)';
+    const live = st.streamLive
+      ? '<b>Stream 1:</b> <span class="liveYes">Live</span>'
+      : '<b>Stream 1:</b> <span class="liveNo">Not live</span>';
+    const keyLine = keySet
+      ? "<b>Stream key:</b> Saved on switcher"
+      : '<b>Stream key:</b> <span class="warnLine">Not set</span> — add key below and click Save';
+    const lyr = (st.usk1On ? "Lyrics on" : "Lyrics off") + " · " + (st.dsk1On ? "Title on" : "Title off");
+    return conn + "<br>" + live + "<br>" + keyLine + '<br><span style="color:#94a3b8">' + escHtml(lyr) + "</span>";
+  }
+
+  async function refreshStreamStatus() {
+    const el = document.getElementById("streamStatusPanel");
+    if (!el) return;
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.obs_get_status) {
+        el.textContent = "Status unavailable until the app finishes loading.";
+        return;
+      }
+      const [ok, st] = await api.obs_get_status();
+      if (!ok || !st) {
+        el.textContent = "Could not read switcher status.";
+        return;
+      }
+      updateStreamBarStatus(st);
+      el.innerHTML = buildStreamStatusHtml(st);
+    } catch (e) {
+      el.textContent = "Could not load stream status: " + e;
+    }
+  }
+
+  // -------- Settings tabs --------
+
+  let midiLearnPollTimer = null;
+
+  function stopMidiLearnPoll() {
+    if (midiLearnPollTimer) {
+      clearInterval(midiLearnPollTimer);
+      midiLearnPollTimer = null;
+    }
+  }
+
+  function startMidiLearnPoll() {
+    stopMidiLearnPoll();
+    midiLearnPollTimer = setInterval(function () {
+      refreshMidiUi(false);
+    }, 250);
+  }
+
+  async function loadMidiSettings() {
+    const statusEl = document.getElementById("midiStatusLine");
+    const select = document.getElementById("midiDeviceSelect");
+    const tbody = document.getElementById("midiMapBody");
+    if (!select || !tbody) return;
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.midi_list_devices || !api?.midi_get_config) {
+        if (statusEl) {
+          statusEl.textContent = "MIDI API not available.";
+          statusEl.classList.add("warn");
+        }
+        return;
+      }
+      const [devOk, devData] = await api.midi_list_devices();
+      const [cfgOk, cfg] = await api.midi_get_config();
+      if (!cfgOk || !cfg) {
+        if (statusEl) statusEl.textContent = "Could not load MIDI settings.";
+        return;
+      }
+      select.innerHTML = "";
+      const optNone = document.createElement("option");
+      optNone.value = "";
+      optNone.textContent = "(No device — MIDI disabled)";
+      select.appendChild(optNone);
+      const devices = (devOk && devData && devData.devices) ? devData.devices : [];
+      devices.forEach(function (d) {
+        const o = document.createElement("option");
+        o.value = d.name;
+        o.textContent = d.name;
+        select.appendChild(o);
+      });
+      select.value = cfg.device || "";
+      if (statusEl) {
+        if (!cfg.available) {
+          statusEl.textContent = "MIDI libraries not installed on this PC.";
+          statusEl.classList.add("warn");
+        } else if (!cfg.device) {
+          statusEl.textContent = "Select a MIDI input device and click Save device.";
+          statusEl.classList.remove("warn");
+        } else if (cfg.listening) {
+          statusEl.textContent = "Listening on: " + cfg.device;
+          statusEl.classList.remove("warn");
+        } else {
+          statusEl.textContent = "Device saved but not listening — check device name.";
+          statusEl.classList.add("warn");
+        }
+      }
+      tbody.innerHTML = "";
+      (cfg.scenes || []).forEach(function (scene) {
+        const tr = document.createElement("tr");
+        tr.setAttribute("data-scene", scene.id);
+        if (cfg.learning === scene.id) tr.classList.add("midiLearning");
+        const tdName = document.createElement("td");
+        tdName.textContent = scene.label;
+        const tdNote = document.createElement("td");
+        tdNote.className = "midiNoteCell";
+        tdNote.id = "midiNote_" + scene.id;
+        tdNote.textContent = scene.note_label || "—";
+        const tdBtn = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "midiLearnBtn" + (cfg.learning === scene.id ? " learning" : "");
+        btn.textContent = cfg.learning === scene.id ? "Learning…" : "Learn";
+        btn.onclick = function () { midiLearn(scene.id); };
+        const clearBtn = document.createElement("button");
+        clearBtn.type = "button";
+        clearBtn.className = "midiClearBtn";
+        clearBtn.textContent = "Clear";
+        clearBtn.onclick = function () { midiClearNote(scene.id); };
+        tdBtn.appendChild(btn);
+        tdBtn.appendChild(document.createTextNode(" "));
+        tdBtn.appendChild(clearBtn);
+        tr.appendChild(tdName);
+        tr.appendChild(tdNote);
+        tr.appendChild(tdBtn);
+        tbody.appendChild(tr);
+      });
+      if (cfg.learning) {
+        startMidiLearnPoll();
+      } else {
+        stopMidiLearnPoll();
+        if (cfg.last_learned) {
+          const ll = cfg.last_learned;
+          const cell = document.getElementById("midiNote_" + ll.scene);
+          if (cell && ll.note != null) {
+            setTimeout(function () { refreshMidiUi(false); }, 100);
+          }
+        }
+      }
+    } catch (e) {
+      if (statusEl) statusEl.textContent = "MIDI error: " + e;
+    }
+  }
+
+  async function refreshMidiUi(reloadDevices) {
+    const api = window.pywebview?.api;
+    if (!api?.midi_get_config) return;
+    const [cfgOk, cfg] = await api.midi_get_config();
+    if (!cfgOk || !cfg) return;
+    if (reloadDevices) return loadMidiSettings();
+    (cfg.scenes || []).forEach(function (scene) {
+      const cell = document.getElementById("midiNote_" + scene.id);
+      if (cell) cell.textContent = scene.note_label || "—";
+      const row = document.querySelector('tr[data-scene="' + scene.id + '"]');
+      if (row) row.classList.toggle("midiLearning", cfg.learning === scene.id);
+      const tr = row;
+      if (tr) {
+        const btn = tr.querySelector(".midiLearnBtn");
+        if (btn) {
+          btn.classList.toggle("learning", cfg.learning === scene.id);
+          btn.textContent = cfg.learning === scene.id ? "Learning…" : "Learn";
+        }
+      }
+    });
+    const statusEl = document.getElementById("midiStatusLine");
+    if (statusEl) {
+      if (cfg.learning) {
+        statusEl.textContent = "Learning… play a MIDI note within 15 seconds";
+        statusEl.classList.remove("warn");
+      } else if (cfg.learn_message) {
+        statusEl.textContent = cfg.learn_message;
+        statusEl.classList.add("warn");
+      } else if (cfg.device && cfg.listening) {
+        statusEl.textContent = "Listening on: " + cfg.device;
+        statusEl.classList.remove("warn");
+      }
+    }
+    if (!cfg.learning) stopMidiLearnPoll();
+  }
+
+  async function saveMidiDevice(fromHeader) {
+    const select = document.getElementById("midiDeviceSelect");
+    if (!select || !window.pywebview?.api?.midi_set_device) return;
+    const [ok, resp] = await window.pywebview.api.midi_set_device(select.value || "");
+    const statusEl = document.getElementById("midiStatusLine");
+    if (statusEl) {
+      statusEl.textContent = ok ? (resp || "Device saved") : ("Error: " + resp);
+      statusEl.classList.toggle("warn", !ok);
+    }
+    if (ok) { clearSettingsDirty("midi"); if (!fromHeader) showStreamToast(resp || "MIDI device saved", "ok"); loadMidiSettings(); }
+  }
+
+  async function midiClearNote(sceneId) {
+    const api = window.pywebview?.api;
+    if (!api?.midi_clear_note) return;
+    const [ok, resp] = await api.midi_clear_note(sceneId);
+    if (!ok) {
+      const statusEl = document.getElementById("midiStatusLine");
+      if (statusEl) { statusEl.textContent = "Error: " + resp; statusEl.classList.add("warn"); }
+      return;
+    }
+    showStreamToast("MIDI mapping cleared", "ok");
+    refreshMidiUi(false);
+  }
+
+  async function midiLearn(sceneId) {
+    const api = window.pywebview?.api;
+    if (!api?.midi_start_learn) return;
+    const [ok, resp] = await api.midi_start_learn(sceneId);
+    const statusEl = document.getElementById("midiStatusLine");
+    if (!ok) {
+      if (statusEl) {
+        statusEl.textContent = "Error: " + resp;
+        statusEl.classList.add("warn");
+      }
+      return;
+    }
+    const [cfgOk, cfg] = await api.midi_get_config();
+    if (statusEl) {
+      if (cfgOk && cfg && cfg.learning) {
+        statusEl.textContent = resp || "Learning… play a MIDI note within 15 seconds";
+        statusEl.classList.remove("warn");
+        startMidiLearnPoll();
+      } else {
+        statusEl.textContent = resp || cfg?.learn_message || "Learn cancelled";
+        statusEl.classList.toggle("warn", !cfg?.learn_message?.startsWith("Mapped "));
+        stopMidiLearnPoll();
+      }
+    } else if (cfgOk && cfg && cfg.learning) {
+      startMidiLearnPoll();
+    } else {
+      stopMidiLearnPoll();
+    }
+    refreshMidiUi(false);
+  }
+
+
+  function resetSettingsScroll() {
+    const body = document.getElementById("settingsTabBody");
+    if (body) body.scrollTop = 0;
+    if (dom.obsSettings) dom.obsSettings.scrollTop = 0;
+  }
+
+  function switchSettingsTab(tabName) {
+    tabName = normalizeSettingsTab(tabName);
+    settingsActiveTab = tabName;
+    const tabs = document.querySelectorAll(".settingsTab");
+    const panels = document.querySelectorAll(".settingsTabPanel");
+    tabs.forEach(function (t) {
+      t.classList.toggle("active", t.getAttribute("data-tab") === tabName);
+    });
+    const panelMap = {
+      switcher: "settingsTabPanelSwitcher",
+      stream: "settingsTabPanelStream",
+      general: "settingsTabPanelGeneral",
+      midi: "settingsTabPanelMidi"
+    };
+    panels.forEach(function (p) {
+      p.classList.toggle("active", p.id === panelMap[tabName]);
+    });
+    resetSettingsScroll();
+    if (state.obsConfig) state.obsConfig.settings_last_tab = tabName;
+    persistUiPrefs({ settings_last_tab: tabName });
+    if (tabName === "stream") { loadStreamSettings(); refreshStreamStatus(); }
+    if (tabName === "midi") { loadMidiSettings(); }
+  }
+
+
+
+  async function loadCameraPreviews() {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.get_camera_preview_urls) return;
+      const [ok, data] = await api.get_camera_preview_urls();
+      if (!ok || !data) return;
+      const urls = data.urls || {};
+      const streams = data.streams || {};
+      function apply(cam) {
+        const img = dom[cam + "Preview"];
+        const ph = dom[cam + "PreviewPlaceholder"];
+        const url = urls[cam];
+        const info = streams[cam] || {};
+        if (!img) return;
+        if (!data.ffmpeg) {
+          if (ph) ph.textContent = "Install ffmpeg on this PC for live previews.";
+          return;
+        }
+        if (!url) {
+          if (ph) ph.textContent = "No stream URL for this camera.";
+          return;
+        }
+        img.onload = function () { if (ph) ph.style.display = "none"; };
+        img.onerror = function () {
+          if (ph) {
+            ph.style.display = "flex";
+            ph.textContent = "Preview unavailable. Source: " + (info.rtmp || info.source || url);
+          }
+        };
+        img.src = url + "?t=" + Date.now();
+        if (ph) {
+          ph.style.display = "flex";
+          ph.textContent = "Connecting to " + (info.rtmp || info.source || "stream") + "…";
+        }
+      }
+      apply("cam1");
+      apply("cam2");
+    } catch (e) {}
+  }
+
+  async function windowMinimize() {
+    try { await window.pywebview?.api?.window_minimize(); } catch (e) {}
+  }
+
+  async function windowToggleFullscreen() {
+    try { await window.pywebview?.api?.window_toggle_fullscreen(); } catch (e) {}
+  }
+
+  async function windowClose() {
+    try { await window.pywebview?.api?.window_close(); } catch (e) {}
+  }
+
+  // -------- OBS Settings UI --------
+  function toggleObsSettings(forceClose) {
+    const panel = dom.obsSettings;
+    const overlay = document.getElementById("settingsDock");
+    if (!panel || !overlay) return;
+    const isVisible = overlay.classList.contains("open");
+    if (isVisible || forceClose) {
+      if (isVisible && !forceClose && anySettingsDirty()) {
+        requestCloseSettings();
+        return;
+      }
+      panel.classList.remove("visible");
+      overlay.classList.remove("open");
+      overlay.setAttribute("aria-hidden", "true");
+    } else {
+      panel.classList.add("visible");
+      overlay.classList.add("open");
+      overlay.setAttribute("aria-hidden", "false");
+      resetSettingsScroll();
+      clearSettingsDirty();
+      loadObsConfig().then(function () {
+        switchSettingsTab(normalizeSettingsTab(state.obsConfig && state.obsConfig.settings_last_tab));
+      });
+      loadSettingsCameraIps();
+      loadSettingsPresetCount();
+      loadSettingsVersion();
+      refreshSwitcherInfo();
+      wireSettingsDirtyListeners();
+      if (window.pywebview?.api?.get_camera_titles) {
+        window.pywebview.api.get_camera_titles().then(function (res) {
+          if (res[0] && res[1]) updateSwitcherSettingsLabels(res[1]);
+        });
+      }
+    }
+  }
+
+  async function refreshSwitcherInfo() {
+    const el = dom.switcherInfoDebug;
+    if (!el) return;
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.switcher_get_info && !api?.obs_get_scene_sources) { el.textContent = "API not ready"; return; }
+      const fn = api.switcher_get_info || api.obs_get_scene_sources;
+      const [ok, data] = await fn.call(api);
+      if (!ok) { el.textContent = "Error: " + data; return; }
+      const conn = data.connected ? "Connected" : "Disconnected";
+      const pgm = data.pgmInput != null ? escHtml(data.cam1Sdi === data.pgmInput ? "Camera 1 (" + (data.cam1SdiLabel || "SDI 1") + ")" : (data.cam2Sdi === data.pgmInput ? "Camera 2 (" + (data.cam2SdiLabel || "SDI 2") + ")" : "Input " + data.pgmInput)) : "—";
+      const pvw = data.pvwInput != null ? escHtml(data.cam1Sdi === data.pvwInput ? "Camera 1 (" + (data.cam1SdiLabel || "SDI 1") + ")" : (data.cam2Sdi === data.pvwInput ? "Camera 2 (" + (data.cam2SdiLabel || "SDI 2") + ")" : "Input " + data.pvwInput)) : "—";
+      el.innerHTML = "<b>" + conn + "</b> to " + escHtml(data.host || "") + ":" + escHtml(String(data.port || "")) + ". Program: <b>" + pgm + "</b>. Preview: <b>" + pvw + "</b>.";
+    } catch (e) {
+      el.textContent = "Could not load: " + e;
+    }
+  }
+
+  async function loadSettingsCameraIps() {
+    try {
+      if (!window.pywebview?.api?.get_camera_ips) return;
+      const res = await window.pywebview.api.get_camera_ips();
+      const ips = Array.isArray(res) ? (res[0] ? res[1] : null) : res;
+      if (ips && typeof ips === "object") {
+        if (dom.settingsCam1Ip) dom.settingsCam1Ip.value = ips.cam1 || "";
+        if (dom.settingsCam2Ip) dom.settingsCam2Ip.value = ips.cam2 || "";
+      }
+    } catch (e) {}
+  }
+
+  async function loadSettingsPresetCount() {
+    try {
+      if (!window.pywebview?.api?.get_preset_count) return;
+      const [ok, n] = await window.pywebview.api.get_preset_count();
+      if (ok && n) {
+        const val = Math.max(2, Math.min(12, parseInt(n, 10) || 6));
+        const step2 = [2,4,6,8,10,12].includes(val) ? val : 6;
+        if (dom.settingsPresetCount) { dom.settingsPresetCount.value = step2; dom.settingsPresetCount.dispatchEvent(new Event("input")); }
+        if (dom.settingsPresetCountValue) dom.settingsPresetCountValue.textContent = step2;
+      }
+    } catch (e) {}
+  }
+
+  async function loadSettingsVersion() {
+    try {
+      if (!window.pywebview?.api?.get_version) return;
+      const [ok, v] = await window.pywebview.api.get_version();
+      const el = document.getElementById("settingsVersion");
+      if (el) el.textContent = "Version " + (ok && v ? String(v) : "—");
+    } catch (e) {}
+  }
+
+  async function loadObsConfig() {
+    try {
+      if (!window.pywebview?.api?.get_obs_config) return;
+      const [ok, config] = await window.pywebview.api.get_obs_config();
+      if (ok && config) {
+        state.obsConfig = config;
+        if (dom.obsHost) dom.obsHost.value = config.host || "";
+        if (dom.obsPort) dom.obsPort.value = config.port || "";
+        if (dom.stream1KeyInput && config.stream1_key) dom.stream1KeyInput.value = config.stream1_key;
+        const hold = Math.max(0, Math.min(5, parseInt(config.switching_hold_seconds, 10) || 0));
+        if (dom.obsHoldTime) { dom.obsHoldTime.value = hold; dom.obsHoldTime.dispatchEvent(new Event("input")); }
+        if (dom.obsHoldTimeValue) dom.obsHoldTimeValue.textContent = hold + " s";
+        if (dom.obsSimpleModeToggle) {
+          const simpleOn = dom.top && dom.top.classList.contains("simpleMode");
+          dom.obsSimpleModeToggle.classList.toggle("on", simpleOn);
+          dom.obsSimpleModeToggle.setAttribute("aria-pressed", simpleOn ? "true" : "false");
+        }
+        const updateToggle = document.getElementById("showUpdateCheckToggle");
+        if (updateToggle) {
+          const updateOn = config.update_check_enabled !== false;
+          updateToggle.classList.toggle("on", updateOn);
+          updateToggle.setAttribute("aria-pressed", updateOn ? "true" : "false");
+        }
+      }
+    } catch (e) {}
+  }
+
+  async function saveObsConfig(fromHeader) {
+    try {
+      if (!window.pywebview?.api?.set_obs_config) return;
+      const simpleOn = dom.obsSimpleModeToggle ? dom.obsSimpleModeToggle.classList.contains("on") : (state.obsConfig && state.obsConfig.simple_mode === true);
+      const config = {
+        host: (dom.obsHost && dom.obsHost.value.trim()) || "192.168.1.80",
+        port: parseInt(dom.obsPort && dom.obsPort.value, 10) || 19010,
+        sdi_inputs: {
+          cam1: (state.obsConfig && state.obsConfig.sdi_inputs && state.obsConfig.sdi_inputs.cam1) || 1,
+          cam2: (state.obsConfig && state.obsConfig.sdi_inputs && state.obsConfig.sdi_inputs.cam2) || 2
+        },
+        auto_reconnect: true,
+        switching_hold_seconds: Math.max(0, Math.min(5, parseInt(dom.obsHoldTime && dom.obsHoldTime.value, 10) || 0)),
+        simple_mode: simpleOn
+      };
+      const [ok, resp] = await window.pywebview.api.set_obs_config(config);
+      if (ok) {
+        state.obsConfig = config;
+        applySimpleMode(config.simple_mode);
+        clearSettingsDirty("switcher");
+        showStreamToast("Switcher settings saved ✓", "ok");
+        if (config.host) {
+          setTimeout(pollObsStatus, 500);
+        }
+        if (!fromHeader) toggleObsSettings();
+      } else {
+        alert("Error saving switcher config: " + resp);
+      }
+    } catch (e) {
+      alert("Error: " + e);
+    }
+  }
+
+  async function saveGeneralSettings(fromHeader) {
+    try {
+      if (window.pywebview?.api?.set_camera_ip) {
+        const ip1 = dom.settingsCam1Ip ? dom.settingsCam1Ip.value.trim() : "";
+        const ip2 = dom.settingsCam2Ip ? dom.settingsCam2Ip.value.trim() : "";
+        await window.pywebview.api.set_camera_ip("cam1", ip1).catch(function() {});
+        await window.pywebview.api.set_camera_ip("cam2", ip2).catch(function() {});
+      }
+      const newPresetCount = parseInt(dom.settingsPresetCount && dom.settingsPresetCount.value ? dom.settingsPresetCount.value : "6", 10);
+      if (window.pywebview?.api?.set_preset_count && [2,4,6,8,10,12].includes(newPresetCount)) {
+        await window.pywebview.api.set_preset_count(newPresetCount).catch(function() {});
+        state.presetCount = newPresetCount;
+        const labels1 = await loadPresetLabelsForMode("cam1");
+        const labels2 = await loadPresetLabelsForMode("cam2");
+        if (labels1) buildPresetUI("cam1", labels1);
+        if (labels2) buildPresetUI("cam2", labels2);
+      }
+      const simpleOn = dom.obsSimpleModeToggle ? dom.obsSimpleModeToggle.classList.contains("on") : false;
+      if (window.pywebview?.api?.set_obs_simple_mode) {
+        await window.pywebview.api.set_obs_simple_mode(simpleOn).catch(function() {});
+      }
+      applySimpleMode(simpleOn);
+      if (state.obsConfig) state.obsConfig.simple_mode = simpleOn;
+      clearSettingsDirty("general");
+      showStreamToast("General settings saved ✓", "ok");
+      loadCameraPreviews();
+      if (!fromHeader) toggleObsSettings();
+    } catch (e) {
+      alert("Error saving settings: " + e);
+    }
+  }
+
+  // -------- Camera online polling --------
+  async function pollOnline(cam) {
+    try {
+      if (!window.pywebview?.api?.camera_ping) return;
+      const [ok, _resp] = await window.pywebview.api.camera_ping(cam);
+      const wasOnline = cameraWasOnline[cam];
+      cameraWasOnline[cam] = !!ok;
+      setDot(cam, ok);
+      if (ok && !wasOnline) {
+        await ensureTrackingOff(cam);
+      }
+    } catch (e) {
+      cameraWasOnline[cam] = false;
+      setDot(cam, false);
+    }
+  }
+
+  async function init() {
+    try {
+    // Cache DOM refs used in hot paths and settings
+    const ids = ["cam1Dot","cam2Dot","cam1Panel","cam2Panel","cam1Presets","cam2Presets",
+      "cam1Speed","cam2Speed","cam1SpeedPct","cam2SpeedPct","cam1ObsBar","cam2ObsBar","cam1ObsLabel","cam2ObsLabel",
+      "cam1CutBtn","cam2CutBtn","cam1ObsConnecting","cam2ObsConnecting","cam1ObsConnected","cam2ObsConnected","cam1Ip","cam2Ip","cam1Title","cam2Title",
+      "obsSettings","switcherInfoDebug","obsHost","obsPort","settingsCam1Ip","settingsCam2Ip",
+      "settingsPresetCount","settingsPresetCountValue","settingsVersion","obsHoldTime","obsHoldTimeValue","obsSimpleModeToggle",
+      "usk1OnBtn","usk1OffBtn","dsk1OnBtn","dsk1OffBtn","stillSidBtn","stillNateBtn","stillCecilBtn",
+      "splitviewOnBtn","splitviewOffBtn","streamGoLiveBtn","streamStopBtn","streamBarStatus","stream1KeyInput",
+      "cam1Preview","cam2Preview","cam1PreviewPlaceholder","cam2PreviewPlaceholder"];
+    for (let i = 0; i < ids.length; i++) dom[ids[i]] = document.getElementById(ids[i]);
+    dom.top = document.querySelector(".top");
+    dom.settingsDock = document.getElementById("settingsDock");
+
+    try {
+      if (window.pywebview?.api?.get_preset_count) {
+        const [ok, n] = await window.pywebview.api.get_preset_count();
+        if (ok && n) {
+          const v = Math.max(2, Math.min(12, parseInt(n, 10) || 6));
+          state.presetCount = [2,4,6,8,10,12].includes(v) ? v : 6;
+        }
+      }
+    } catch (e) {}
+    buildPresetUI("cam1", null);
+    buildPresetUI("cam2", null);
+    setEditMode("cam1", false);
+    setEditMode("cam2", false);
+
+    speedChanged("cam1");
+    speedChanged("cam2");
+
+    refreshLabelsWithRetry("cam1");
+    refreshLabelsWithRetry("cam2");
+
+    state.cam1.trackingOn = false;
+    state.cam2.trackingOn = false;
+    updateTrackingButtons("cam1");
+    updateTrackingButtons("cam2");
+    await ensureTrackingOff("cam1");
+    await ensureTrackingOff("cam2");
+    fetchFocusStatus("cam1");
+    fetchFocusStatus("cam2");
+
+    await loadSavedSpeed("cam1");
+    await loadSavedSpeed("cam2");
+
+    pollOnline("cam1");
+    pollOnline("cam2");
+    setInterval(function () { pollOnline("cam1"); pollOnline("cam2"); }, 3000);
+
+    await loadObsConfig();
+    const simpleOn = !!(state.obsConfig && state.obsConfig.simple_mode);
+    applySimpleMode(simpleOn);
+    if (window.pywebview?.api?.set_obs_simple_mode) {
+      window.pywebview.api.set_obs_simple_mode(simpleOn).catch(function() {});
+    }
+    await loadCameraTitles();
+    pollObsStatus();
+    setInterval(pollObsStatus, 300);
+    loadCameraPreviews();
+    wireSettingsDirtyListeners();
+    } catch (e) {
+      console.error("init error:", e);
+      try {
+        buildPresetUI("cam1", null);
+        buildPresetUI("cam2", null);
+      } catch (e2) {}
+    }
+  }
+
+  // Run init only after pywebview API is ready so get_preset_count (and other API calls) succeed on startup
+  function runInit() {
+    if (window.pywebview?.api) {
+      runPostStartupUi();
+      setupGlobalShortcuts();
+      return;
+    }
+    window.addEventListener("pywebviewready", function once() {
+      window.removeEventListener("pywebviewready", once);
+      runPostStartupUi();
+      setupGlobalShortcuts();
+    });
+  }
+
+  function setupGlobalShortcuts() {
+    window.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        if (welcomeInfoOpen) {
+          event.preventDefault();
+          closeWelcomeInfo();
+          return;
+        }
+        if (updateConfirmOpen) {
+          event.preventDefault();
+          dismissUpdateConfirm();
+          return;
+        }
+        if (streamStopConfirmOpen) {
+          event.preventDefault();
+          closeStreamStopConfirm();
+          return;
+        }
+        const overlay = document.getElementById("settingsDock");
+        if (overlay && overlay.classList.contains("open")) {
+          event.preventDefault();
+          requestCloseSettings();
+          return;
+        }
+      }
+      if (event.code !== "Space" && event.key !== " ") return;
+      const target = event.target;
+      const tag = target && target.tagName ? target.tagName.toLowerCase() : "";
+      if (tag === "input" || tag === "textarea" || target.isContentEditable) {
+        return; // don't hijack space when typing or editing text
+      }
+      event.preventDefault();
+      const cam = state.currentLiveCam || "cam1";
+      obsCut(cam);
+    });
+  }
+
+  runInit();
+</script>
+</body>
+</html>
+

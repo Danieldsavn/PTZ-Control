@@ -1,0 +1,4 @@
+pywebview
+requests
+mido
+python-rtmidi
