@@ -1,6 +1,6 @@
 {
-  "version": "3.1",
-  "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.1/PTZ-Control.exe",
-  "sha256": "adae829cd13ae8a844096025e650d63ee8395d3e2b1b989da693035ae7ce64bc",
-  "release_notes": "Settings UX fixes, switcher controls disabled when offline, startup flow improvements, and PTZ-Control.exe naming."
+  "version": "3.2",
+  "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.2/PTZ-Control.exe",
+  "sha256": "232f27b50760a88f39cee2c8477491a81b79ad74435c567dba533d64a95655b0",
+  "release_notes": "Fix stream bar disable when switcher offline, remove false settings unsaved indicators, fix update restart, and write version.json only after successful install."
 }

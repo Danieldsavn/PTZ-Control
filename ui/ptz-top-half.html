@@ -432,6 +432,11 @@
       cursor: not-allowed;
       pointer-events: none;
     }
+    .streamBar.disconnected button {
+      opacity: 0.45;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
     .streamBar .streamSettingsBtn {
       font-size: 12px;
       padding: 6px 12px;
@@ -1517,7 +1522,6 @@
       <div class="settingsModalHdr">
         <h3 id="settingsTitle">Settings</h3>
         <div class="settingsModalHdrActions">
-          <span id="settingsUnsavedBadge" class="settingsUnsavedBadge">Unsaved changes</span>
           <button type="button" class="primary" id="settingsSaveBtn" onclick="saveSettingsActiveTab()">Save</button>
           <button type="button" class="ghost settingsCloseBtn" title="Close" onclick="requestCloseSettings()">&#x2715;</button>
         </div>
@@ -1688,33 +1692,19 @@
   }
 
   function markSettingsDirty(tab) {
-    if (settingsLoadSilent) return;
-    if (!tab || !(tab in settingsDirty)) return;
-    settingsDirty[tab] = true;
-    updateSettingsDirtyUi();
+    /* Unsaved tab indicators removed — use Save on each tab when needed. */
   }
 
   function clearSettingsDirty(tab) {
-    if (tab) {
-      if (tab in settingsDirty) settingsDirty[tab] = false;
-    } else {
-      Object.keys(settingsDirty).forEach(function (k) { settingsDirty[k] = false; });
-    }
-    updateSettingsDirtyUi();
+    /* no-op */
   }
 
   function anySettingsDirty() {
-    return Object.keys(settingsDirty).some(function (k) { return settingsDirty[k]; });
+    return false;
   }
 
   function updateSettingsDirtyUi() {
-    const badge = document.getElementById("settingsUnsavedBadge");
-    const dirty = anySettingsDirty();
-    if (badge) badge.classList.toggle("visible", dirty);
-    document.querySelectorAll(".settingsTab").forEach(function (tabEl) {
-      const tab = tabEl.getAttribute("data-tab");
-      tabEl.classList.toggle("unsaved", !!(tab && settingsDirty[tab]));
-    });
+    /* no-op */
   }
 
   function openSettingsToTab(tabName) {
@@ -1770,19 +1760,7 @@
   }
 
   function wireSettingsDirtyListeners() {
-    const map = [
-      ["stream", "stream1KeyInput"],
-      ["switcher", "obsHost"], ["switcher", "obsPort"], ["switcher", "obsHoldTime"],
-      ["general", "settingsCam1Ip"], ["general", "settingsCam2Ip"], ["general", "settingsPresetCount"],
-      ["midi", "midiDeviceSelect"]
-    ];
-    map.forEach(function (pair) {
-      const el = document.getElementById(pair[1]);
-      if (!el || el._dirtyWired) return;
-      el._dirtyWired = true;
-      const ev = el.tagName === "SELECT" ? "change" : "input";
-      el.addEventListener(ev, function () { markSettingsDirty(pair[0]); });
-    });
+    /* no-op */
   }
 
 
@@ -2217,8 +2195,9 @@
   async function pollObsStatus() {
     try {
       updateLockState();
-      if (!window.pywebview?.api?.obs_get_status) return;
-      const [ok, obsStatus] = await window.pywebview.api.obs_get_status();
+      const api = window.pywebview?.api;
+      if (!api?.obs_get_status) return;
+      const [ok, obsStatus] = await api.obs_get_status();
       if (ok && obsStatus) {
         const connected = !!obsStatus.connected;
         if (connected && !switcherWasConnected) {
@@ -2236,9 +2215,20 @@
         updateStreamControls(obsStatus);
         const streamPanel = document.getElementById("settingsTabPanelStream");
         if (streamPanel && streamPanel.classList.contains("active")) refreshStreamStatus();
+      } else {
+        switcherConnected = false;
+        switcherWasConnected = false;
+        setSwitcherBarConnected(false);
+        updateCameraCutUi("cam1");
+        updateCameraCutUi("cam2");
+        updateObsBar("cam1", null);
+        updateObsBar("cam2", null);
       }
     } catch (e) {
-      // Silent fail
+      switcherConnected = false;
+      setSwitcherBarConnected(false);
+      updateCameraCutUi("cam1");
+      updateCameraCutUi("cam2");
     }
   }
 
@@ -2351,31 +2341,37 @@
     if (activeBtn) activeBtn.classList.add("on");
   }
 
+  const SWITCHER_BAR_BTN_IDS = [
+    "usk1OnBtn", "usk1OffBtn", "dsk1OnBtn", "dsk1OffBtn",
+    "stillSidBtn", "stillNateBtn", "stillCecilBtn",
+    "splitviewOnBtn", "splitviewOffBtn", "streamGoLiveBtn", "streamStopBtn"
+  ];
+
+  function setSwitcherBarConnected(connected) {
+    const on = !!connected;
+    const streamBar = document.querySelector(".streamBar");
+    if (streamBar) streamBar.classList.toggle("disconnected", !on);
+    SWITCHER_BAR_BTN_IDS.forEach(function (id) {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      if (id === "streamStopBtn") return;
+      btn.disabled = !on;
+      btn.setAttribute("aria-disabled", on ? "false" : "true");
+    });
+  }
+
   function updateStreamControls(obsStatus) {
     const connected = !!(obsStatus && obsStatus.connected);
     const isLive = connected && !!(obsStatus && obsStatus.streamLive);
-    const liveBtn = dom.streamGoLiveBtn;
-    if (liveBtn) {
-      liveBtn.classList.toggle("on", isLive);
-      liveBtn.disabled = !connected;
-      liveBtn.setAttribute("aria-disabled", connected ? "false" : "true");
-    }
-    const stopBtn = dom.streamStopBtn;
+    setSwitcherBarConnected(connected);
+    const liveBtn = document.getElementById("streamGoLiveBtn");
+    if (liveBtn) liveBtn.classList.toggle("on", isLive);
+    const stopBtn = document.getElementById("streamStopBtn");
     if (stopBtn) {
       stopBtn.disabled = !connected || !isLive;
       stopBtn.classList.toggle("on", isLive);
       stopBtn.setAttribute("aria-disabled", stopBtn.disabled ? "true" : "false");
     }
-    const switcherBtns = [
-      dom.usk1OnBtn, dom.usk1OffBtn, dom.dsk1OnBtn, dom.dsk1OffBtn,
-      dom.stillSidBtn, dom.stillNateBtn, dom.stillCecilBtn,
-      dom.splitviewOnBtn, dom.splitviewOffBtn
-    ];
-    switcherBtns.forEach(function (btn) {
-      if (!btn) return;
-      btn.disabled = !connected;
-      btn.setAttribute("aria-disabled", connected ? "false" : "true");
-    });
     const uskOn = !!(obsStatus && obsStatus.usk1On);
     const dskOn = !!(obsStatus && obsStatus.dsk1On);
     if (dom.usk1OnBtn) {
@@ -3600,7 +3596,9 @@
     pollOnline("cam2");
     setInterval(function () { pollOnline("cam1"); pollOnline("cam2"); }, 3000);
 
+    settingsLoadSilent = true;
     await loadObsConfig();
+    settingsLoadSilent = false;
     const simpleOn = !!(state.obsConfig && state.obsConfig.simple_mode);
     applySimpleMode(simpleOn);
     if (window.pywebview?.api?.set_obs_simple_mode) {
@@ -3609,6 +3607,7 @@
     await loadCameraTitles();
     updateCameraCutUi("cam1");
     updateCameraCutUi("cam2");
+    setSwitcherBarConnected(false);
     updateStreamControls({ connected: false });
     pollObsStatus();
     setInterval(pollObsStatus, 300);

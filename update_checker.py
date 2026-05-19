@@ -190,27 +190,38 @@ def _write_apply_script(
     canonical_exe: str,
     running_exe: str,
     parent_pid: int,
+    new_version: str,
+    version_file: str,
 ) -> None:
     download_path = canonical_exe + DOWNLOAD_SUFFIX
     bak_path = canonical_exe + BAK_SUFFIX
-    # PowerShell: wait for app exit, install canonical exe, remove legacy name, restart
+    version_json = json.dumps({"version": str(new_version).strip()})
+    # PowerShell: wait for app exit, swap exe, write version.json, relaunch app
     ps = f"""$ErrorActionPreference = 'Stop'
 $parentPid = {int(parent_pid)}
 $canonical = '{canonical_exe.replace("'", "''")}'
 $running = '{running_exe.replace("'", "''")}'
 $download = '{download_path.replace("'", "''")}'
 $bak = '{bak_path.replace("'", "''")}'
+$versionFile = '{version_file.replace("'", "''")}'
+$versionJson = '{version_json.replace("'", "''")}'
+$workDir = '{exe_dir.replace("'", "''")}'
 try {{
   Wait-Process -Id $parentPid -ErrorAction SilentlyContinue
 }} catch {{}}
-Start-Sleep -Seconds 1
+Start-Sleep -Seconds 2
 if (Test-Path $download) {{
   if (Test-Path $canonical) {{ Move-Item -LiteralPath $canonical -Destination $bak -Force }}
   Move-Item -LiteralPath $download -Destination $canonical -Force
   if ($running -ne $canonical -and (Test-Path $running)) {{
     Remove-Item -LiteralPath $running -Force -ErrorAction SilentlyContinue
   }}
-  Start-Process -FilePath $canonical -WorkingDirectory '{exe_dir.replace("'", "''")}'
+  Set-Content -LiteralPath $versionFile -Value $versionJson -Encoding UTF8
+  Start-Process -FilePath $canonical -WorkingDirectory $workDir
+  Start-Sleep -Milliseconds 500
+  if (-not (Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($canonical)) -ErrorAction SilentlyContinue)) {{
+    Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "start", "", $canonical) -WorkingDirectory $workDir
+  }}
 }}
 Remove-Item -LiteralPath '{script_path.replace("'", "''")}' -Force -ErrorAction SilentlyContinue
 """
@@ -234,8 +245,9 @@ def apply_downloaded_update(
     script_path = os.path.join(exe_dir, "apply_update.ps1")
     pid = parent_pid if parent_pid is not None else os.getpid()
     try:
-        _write_apply_script(script_path, exe_dir, canonical, running, pid)
-        write_version_file(version_file, new_version)
+        _write_apply_script(
+            script_path, exe_dir, canonical, running, pid, new_version, version_file
+        )
         flags = 0
         if sys.platform == "win32":
             flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
