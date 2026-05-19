@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import json
 import socket
@@ -1806,6 +1807,36 @@ class Api:
             return True, ""
         except Exception as e:
             return False, str(e)
+
+    def restart_app(self):
+        """Relaunch PTZ-Control (used when switcher was off at startup)."""
+        try:
+            exe = sys.executable
+            work_dir = os.path.dirname(os.path.abspath(exe))
+            if getattr(sys, "frozen", False):
+                subprocess.Popen(
+                    [exe],
+                    cwd=work_dir,
+                    close_fds=True,
+                    creationflags=subprocess.DETACHED_PROCESS
+                    | subprocess.CREATE_NEW_PROCESS_GROUP,
+                )
+            else:
+                subprocess.Popen(
+                    [sys.executable, os.path.abspath(__file__)],
+                    cwd=work_dir,
+                    close_fds=True,
+                )
+            global _app_window
+            if _app_window:
+                try:
+                    _app_window.destroy()
+                except Exception:
+                    pass
+            time.sleep(0.3)
+            os._exit(0)
+        except Exception as e:
+            return False, f"restart_app error: {e}"
 
     def obs_cut(self, cam: str):
         return self.switcher_cut(cam)

@@ -432,7 +432,7 @@
       cursor: not-allowed;
       pointer-events: none;
     }
-    .streamBar.disconnected button {
+    .streamBar.disconnected button:not(.streamSettingsBtn) {
       opacity: 0.45;
       cursor: not-allowed;
       pointer-events: none;
@@ -695,6 +695,20 @@
     /* When tracking is on: disable preset recall buttons only */
     .panel.trackingOn .presetBtn { opacity: 0.5; pointer-events: none; cursor: not-allowed; }
 
+    /* Camera offline: disable controls; Edit button stays usable */
+    .panel.cameraOffline button:not(.editBtn):not(.cut),
+    .panel.cameraOffline input.speed,
+    .panel.cameraOffline .presetBtn {
+      opacity: 0.5;
+      pointer-events: none;
+      cursor: not-allowed;
+    }
+    .panel.cameraOffline.editMode .editOnly {
+      opacity: 1;
+      pointer-events: auto;
+      cursor: pointer;
+    }
+
     /* Speed slider */
     .speedWrap{
       margin-top: 6px;
@@ -928,6 +942,21 @@
       border: 1px solid rgba(255, 255, 255, 0.35);
     }
     .startupSettingsBtn:hover { background: rgba(255, 255, 255, 0.25); }
+    .startupRestartBtn {
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+    }
+    .startupRestartBtn:hover { background: rgba(255, 255, 255, 0.22); }
+    .startupIssuesHint {
+      margin: 0 0 12px 0;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: rgba(251, 191, 36, 0.15);
+      color: #fde68a;
+      font-size: 14px;
+      line-height: 1.45;
+    }
     .startupStepIcon {
       flex: 0 0 22px;
       width: 22px;
@@ -1254,11 +1283,13 @@
       <ul class="startupSteps" id="startupSteps"></ul>
       <div id="startupIssues" class="startupIssues" aria-live="polite">
         <p class="startupIssuesTitle">Some steps could not complete:</p>
+        <p id="startupIssuesHint" class="startupIssuesHint" style="display:none;"></p>
         <ul class="startupIssuesList" id="startupIssuesList"></ul>
       </div>
       <div id="startupActions" class="startupActions">
         <button type="button" class="startupContinueBtn" id="startupContinueBtn">Continue</button>
         <button type="button" class="startupSettingsBtn" id="startupSettingsBtn">Settings</button>
+        <button type="button" class="startupRestartBtn" id="startupRestartBtn" style="display:none;">Restart app</button>
       </div>
     </div>
   </div>
@@ -1668,11 +1699,14 @@
     cam1: "Camera 1 is not reachable",
     cam2: "Camera 2 is not reachable",
     switcher: "Switcher is not connected",
-    usk: "Upstream key settings could not be verified",
-    multisource: "Multisource layout could not be configured",
-    dsk: "Downstream key could not be set to Still 1",
-    streamui: "Could not read lyrics, title, or still status"
+    usk: "Upstream key settings could not be verified (switcher required)",
+    multisource: "Multisource layout could not be configured (switcher required)",
+    dsk: "Downstream key could not be set to Still 1 (switcher required)",
+    streamui: "Could not read lyrics, title, or still status (switcher required)"
   };
+  const STARTUP_SWITCHER_HINT =
+    "Please power on the video switcher and restart the application.";
+  const SWITCHER_DEPENDENT_STARTUP_IDS = ["usk", "multisource", "dsk", "streamui"];
   let switcherConnected = false;
   let appInitPromise = null;
   const STARTUP_STEP_SETTINGS_TAB = {
@@ -1786,6 +1820,14 @@
     if (label) {
       label.textContent = online === true ? "Online" : online === false ? "Offline" : "Checking…";
     }
+    updateCameraControlsEnabled(cam);
+  }
+
+  function updateCameraControlsEnabled(cam) {
+    const panel = dom[cam + "Panel"];
+    if (!panel) return;
+    const online = !!cameraWasOnline[cam];
+    panel.classList.toggle("cameraOffline", !online);
   }
 
   async function loadCameraTitles() {
@@ -2358,6 +2400,11 @@
       btn.disabled = !on;
       btn.setAttribute("aria-disabled", on ? "false" : "true");
     });
+    const settingsBtn = document.getElementById("streamSettingsBtn");
+    if (settingsBtn) {
+      settingsBtn.disabled = false;
+      settingsBtn.removeAttribute("aria-disabled");
+    }
   }
 
   function updateStreamControls(obsStatus) {
@@ -2731,12 +2778,27 @@
     return normalizeSettingsTab(tab || "stream");
   }
 
+  function startupFailedSwitcher(failedSteps) {
+    return failedSteps.some(function (s) { return s.id === "switcher"; });
+  }
+
   function showStartupFailurePanel(failedSteps) {
     const title = document.getElementById("startupTitle");
     const issues = document.getElementById("startupIssues");
+    const hint = document.getElementById("startupIssuesHint");
     const list = document.getElementById("startupIssuesList");
     const actions = document.getElementById("startupActions");
+    const switcherFailed = startupFailedSwitcher(failedSteps);
     if (title) title.textContent = "Setup incomplete";
+    if (hint) {
+      if (switcherFailed) {
+        hint.textContent = STARTUP_SWITCHER_HINT;
+        hint.style.display = "block";
+      } else {
+        hint.textContent = "";
+        hint.style.display = "none";
+      }
+    }
     if (list) {
       list.innerHTML = "";
       failedSteps.forEach(function (step) {
@@ -2749,17 +2811,33 @@
     if (actions) actions.style.display = "flex";
     const continueBtn = document.getElementById("startupContinueBtn");
     const settingsBtn = document.getElementById("startupSettingsBtn");
+    const restartBtn = document.getElementById("startupRestartBtn");
     if (continueBtn) {
       continueBtn.onclick = function () { dismissStartupSplash(); };
     }
     if (settingsBtn) {
+      settingsBtn.disabled = false;
       settingsBtn.onclick = async function () {
         try {
           if (appInitPromise) await appInitPromise;
         } catch (e) {}
-        const tab = settingsTabForFailedSteps(failedSteps);
+        const tab = switcherFailed ? "switcher" : settingsTabForFailedSteps(failedSteps);
         dismissStartupSplash();
         window.setTimeout(function () { openSettingsToTab(tab); }, 120);
+      };
+    }
+    if (restartBtn) {
+      restartBtn.style.display = switcherFailed ? "inline-block" : "none";
+      restartBtn.onclick = async function () {
+        try {
+          if (window.pywebview?.api?.restart_app) {
+            await window.pywebview.api.restart_app();
+          } else {
+            window.location.reload();
+          }
+        } catch (e) {
+          window.location.reload();
+        }
       };
     }
   }
@@ -2836,28 +2914,6 @@
   function buildStartupSteps() {
     const steps = [
       {
-        id: "cam1",
-        settingsTab: "general",
-        label: "Connecting to Camera 1",
-        run: async function () {
-          const api = window.pywebview?.api;
-          if (!api?.camera_ping) return false;
-          const [ok] = await api.camera_ping("cam1");
-          return !!ok;
-        }
-      },
-      {
-        id: "cam2",
-        settingsTab: "general",
-        label: "Connecting to Camera 2",
-        run: async function () {
-          const api = window.pywebview?.api;
-          if (!api?.camera_ping) return false;
-          const [ok] = await api.camera_ping("cam2");
-          return !!ok;
-        }
-      },
-      {
         id: "switcher",
         settingsTab: "switcher",
         label: "Connecting to Switcher",
@@ -2877,6 +2933,32 @@
             }
           }
           return false;
+        }
+      },
+      {
+        id: "cam1",
+        settingsTab: "general",
+        label: "Connecting to Camera 1",
+        run: async function () {
+          const api = window.pywebview?.api;
+          if (!api?.camera_ping) return false;
+          const [ok] = await api.camera_ping("cam1");
+          if (ok) cameraWasOnline.cam1 = true;
+          updateCameraControlsEnabled("cam1");
+          return !!ok;
+        }
+      },
+      {
+        id: "cam2",
+        settingsTab: "general",
+        label: "Connecting to Camera 2",
+        run: async function () {
+          const api = window.pywebview?.api;
+          if (!api?.camera_ping) return false;
+          const [ok] = await api.camera_ping("cam2");
+          if (ok) cameraWasOnline.cam2 = true;
+          updateCameraControlsEnabled("cam2");
+          return !!ok;
         }
       }
     ];
@@ -2938,11 +3020,20 @@
     } catch (e) {}
   }
 
+  function markSwitcherDependentStepsSkipped(steps, fromIndex) {
+    for (let j = fromIndex; j < steps.length; j++) {
+      if (SWITCHER_DEPENDENT_STARTUP_IDS.indexOf(steps[j].id) >= 0) {
+        setStartupStepState(steps[j].id, "warn");
+      }
+    }
+  }
+
   async function runStartupSequence() {
     await loadObsConfigEarly();
     const deadline = Date.now() + SPLASH_MAX_MS;
     const steps = buildStartupSteps();
     renderStartupSteps(steps);
+    let switcherOk = false;
 
     for (let i = 0; i < steps.length; i++) {
       if (Date.now() >= deadline) {
@@ -2950,6 +3041,10 @@
         break;
       }
       const step = steps[i];
+      if (!switcherOk && SWITCHER_DEPENDENT_STARTUP_IDS.indexOf(step.id) >= 0) {
+        setStartupStepState(step.id, "warn");
+        continue;
+      }
       const t0 = Date.now();
       setStartupStepState(step.id, "active");
       let ok = false;
@@ -2957,6 +3052,16 @@
         ok = await step.run();
       } catch (e) {
         ok = false;
+      }
+      if (step.id === "switcher") {
+        switcherOk = ok;
+        switcherConnected = ok;
+        if (!ok) {
+          setStartupStepState(step.id, "warn");
+          markSwitcherDependentStepsSkipped(steps, i + 1);
+          await waitUntil(t0 + SPLASH_MIN_STEP_MS);
+          continue;
+        }
       }
       await waitUntil(t0 + SPLASH_MIN_STEP_MS);
       if (Date.now() >= deadline) {
@@ -3607,6 +3712,8 @@
     await loadCameraTitles();
     updateCameraCutUi("cam1");
     updateCameraCutUi("cam2");
+    updateCameraControlsEnabled("cam1");
+    updateCameraControlsEnabled("cam2");
     setSwitcherBarConnected(false);
     updateStreamControls({ connected: false });
     pollObsStatus();
