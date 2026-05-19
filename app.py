@@ -37,10 +37,9 @@ from midi_manager import (
 )
 from update_checker import (
     DEFAULT_MANIFEST_URL,
-    apply_downloaded_update,
-    canonical_exe_path,
     check_for_update,
-    download_update,
+    launch_gui_updater,
+    write_update_job,
 )
 
 # ---- Camera config ----
@@ -1871,32 +1870,23 @@ class Api:
             if not st.get("update_available"):
                 return False, st.get("error") or "No update available"
             exe_dir = _exe_dir()
-            exe_path = canonical_exe_path(exe_dir)
-            download_path = exe_path + ".download"
-            dl_url = st.get("download_url") or ""
-            sha = st.get("sha256") or ""
-
-            def progress(done, total):
-                pass
-
-            ok, msg = download_update(dl_url, download_path, sha, progress)
+            job = {
+                "download_url": st.get("download_url") or "",
+                "sha256": st.get("sha256") or "",
+                "version": st.get("latest") or "",
+                "install_dir": exe_dir,
+            }
+            job_path = write_update_job(exe_dir, job)
+            ok, msg = launch_gui_updater(exe_dir, job_path)
             if not ok:
                 return False, msg
-            ok2, msg2 = apply_downloaded_update(
-                exe_dir,
-                st.get("latest") or "",
-                VERSION_FILE,
-            )
-            if not ok2:
-                return False, msg2
             global _app_window
             if _app_window:
                 try:
                     _app_window.destroy()
                 except Exception:
                     pass
-            # Updater script is already running detached; exit so it can replace the exe.
-            time.sleep(0.5)
+            time.sleep(1)
             os._exit(0)
         except Exception as e:
             return False, f"download_and_apply_update error: {e}"

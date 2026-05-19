@@ -2652,7 +2652,7 @@
     const api = window.pywebview?.api;
     const btn = document.getElementById("updateConfirmNow");
     if (!api?.download_and_apply_update) return;
-    if (btn) { btn.disabled = true; btn.textContent = "Downloading\u2026"; }
+    if (btn) { btn.disabled = true; btn.textContent = "Starting updater\u2026"; }
     try {
       const [ok, resp] = await api.download_and_apply_update();
       if (!ok) {
@@ -2660,7 +2660,7 @@
         if (btn) { btn.disabled = false; btn.textContent = "Update now"; }
         return;
       }
-      showStreamToast(resp || "Installing update\u2026 app will restart.", "ok");
+      showStreamToast(resp || "Updater is installing\u2026 the app will restart.", "ok");
     } catch (e) {
       showStreamToast("Update error: " + e, "error");
       if (btn) { btn.disabled = false; btn.textContent = "Update now"; }

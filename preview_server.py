@@ -1,7 +1,8 @@
 """
 Local MJPEG preview proxy — transcodes camera RTMP/RTSP to browser-friendly multipart JPEG.
-Requires ffmpeg on PATH.
+Uses tools/ffmpeg.exe beside the app, or ffmpeg on PATH.
 """
+import os
 import shutil
 import subprocess
 import sys
@@ -9,15 +10,25 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PREVIEW_PORT = 8765
-_ffmpeg_path = None
+_ffmpeg_path: str | None = None
 _procs: dict[str, subprocess.Popen] = {}
 _proc_lock = threading.Lock()
+
+
+def _app_install_dir() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 def ffmpeg_available() -> bool:
     global _ffmpeg_path
     if _ffmpeg_path is not None:
         return bool(_ffmpeg_path)
+    bundled = os.path.join(_app_install_dir(), "tools", "ffmpeg.exe")
+    if os.path.isfile(bundled):
+        _ffmpeg_path = bundled
+        return True
     _ffmpeg_path = shutil.which("ffmpeg") or ""
     return bool(_ffmpeg_path)
 

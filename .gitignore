@@ -1,5 +1,8 @@
 # Build artifacts
 build/
+installer/deps/*.exe
+installer/deps/_ffmpeg_extract/
+installer/deps/*.zip
 dist/*.exe
 dist/*.download
 dist/*.bak
