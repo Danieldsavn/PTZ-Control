@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from typing import Any
 
 import requests
@@ -21,7 +22,8 @@ EXE_NAME = "PTZ-Control.exe"
 LEGACY_EXE_NAME = "PTZ-CONTROL 3.0.exe"
 DOWNLOAD_SUFFIX = ".download"
 BAK_SUFFIX = ".bak"
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 120
+APPLY_LOG_NAME = "apply_update.log"
 
 
 def canonical_exe_path(exe_dir: str) -> str:
@@ -189,16 +191,19 @@ def _write_apply_script(
     exe_dir: str,
     canonical_exe: str,
     running_exe: str,
-    parent_pid: int,
     new_version: str,
     version_file: str,
 ) -> None:
     download_path = canonical_exe + DOWNLOAD_SUFFIX
     bak_path = canonical_exe + BAK_SUFFIX
+    log_path = os.path.join(exe_dir, APPLY_LOG_NAME)
     version_json = json.dumps({"version": str(new_version).strip()})
-    # PowerShell: wait for app exit, swap exe, write version.json, relaunch app
-    ps = f"""$ErrorActionPreference = 'Stop'
-$parentPid = {int(parent_pid)}
+    # Wait for running process to exit, swap exe (retry while locked), relaunch, log steps.
+    ps = f"""$logFile = '{log_path.replace("'", "''")}'
+function Log($msg) {{
+  try {{ Add-Content -LiteralPath $logFile -Value ("[{{0}}] {{1}}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg) }} catch {{}}
+}}
+Log "Update script started"
 $canonical = '{canonical_exe.replace("'", "''")}'
 $running = '{running_exe.replace("'", "''")}'
 $download = '{download_path.replace("'", "''")}'
@@ -206,27 +211,88 @@ $bak = '{bak_path.replace("'", "''")}'
 $versionFile = '{version_file.replace("'", "''")}'
 $versionJson = '{version_json.replace("'", "''")}'
 $workDir = '{exe_dir.replace("'", "''")}'
-try {{
-  Wait-Process -Id $parentPid -ErrorAction SilentlyContinue
-}} catch {{}}
+$procName = [System.IO.Path]::GetFileNameWithoutExtension($running)
+Log ("Waiting for process: " + $procName)
+$deadline = (Get-Date).AddSeconds(120)
+while ((Get-Date) -lt $deadline) {{
+  $alive = Get-Process -Name $procName -ErrorAction SilentlyContinue
+  if (-not $alive) {{ break }}
+  Start-Sleep -Seconds 1
+}}
 Start-Sleep -Seconds 2
-if (Test-Path $download) {{
-  if (Test-Path $canonical) {{ Move-Item -LiteralPath $canonical -Destination $bak -Force }}
-  Move-Item -LiteralPath $download -Destination $canonical -Force
-  if ($running -ne $canonical -and (Test-Path $running)) {{
-    Remove-Item -LiteralPath $running -Force -ErrorAction SilentlyContinue
-  }}
-  Set-Content -LiteralPath $versionFile -Value $versionJson -Encoding UTF8
-  Start-Process -FilePath $canonical -WorkingDirectory $workDir
-  Start-Sleep -Milliseconds 500
-  if (-not (Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($canonical)) -ErrorAction SilentlyContinue)) {{
-    Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "start", "", $canonical) -WorkingDirectory $workDir
+if (-not (Test-Path -LiteralPath $download)) {{
+  Log ("Download file missing: " + $download)
+  exit 1
+}}
+$moved = $false
+for ($i = 1; $i -le 60; $i++) {{
+  try {{
+    if (Test-Path -LiteralPath $canonical) {{
+      Move-Item -LiteralPath $canonical -Destination $bak -Force -ErrorAction Stop
+    }}
+    Move-Item -LiteralPath $download -Destination $canonical -Force -ErrorAction Stop
+    $moved = $true
+    Log "Exe replaced successfully"
+    break
+  }} catch {{
+    Log ("Replace attempt $i failed: " + $_.Exception.Message)
+    Start-Sleep -Seconds 1
   }}
 }}
-Remove-Item -LiteralPath '{script_path.replace("'", "''")}' -Force -ErrorAction SilentlyContinue
+if (-not $moved) {{
+  Log "ERROR: Could not replace exe after retries"
+  exit 1
+}}
+if ($running -ne $canonical -and (Test-Path -LiteralPath $running)) {{
+  try {{
+    Remove-Item -LiteralPath $running -Force -ErrorAction SilentlyContinue
+    Log "Removed legacy exe"
+  }} catch {{}}
+}}
+try {{
+  Set-Content -LiteralPath $versionFile -Value $versionJson -Encoding UTF8
+  Log "version.json updated"
+}} catch {{
+  Log ("version.json write failed: " + $_.Exception.Message)
+}}
+Log ("Launching: " + $canonical)
+Start-Process -FilePath $canonical -WorkingDirectory $workDir | Out-Null
+Start-Sleep -Seconds 2
+$restarted = Get-Process -Name $procName -ErrorAction SilentlyContinue
+if (-not $restarted) {{
+  Log "Start-Process did not show app; trying cmd start"
+  $arg = '/c start "" "' + $canonical + '"'
+  Start-Process -FilePath "cmd.exe" -ArgumentList $arg -WorkingDirectory $workDir | Out-Null
+}}
+Log "Update script finished"
 """
     with open(script_path, "w", encoding="utf-8", newline="\r\n") as f:
         f.write(ps)
+
+
+def _launch_apply_script(script_path: str, exe_dir: str) -> None:
+    """Start updater detached so it keeps running after the app exits."""
+    script_quoted = f'"{script_path}"'
+    if sys.platform == "win32":
+        # "start" fully detaches the child on Windows (more reliable than DETACHED_PROCESS alone).
+        cmd = (
+            f'start "" /MIN powershell.exe -NoProfile -ExecutionPolicy Bypass '
+            f"-WindowStyle Hidden -File {script_quoted}"
+        )
+        subprocess.Popen(cmd, shell=True, cwd=exe_dir)
+        return
+    subprocess.Popen(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            script_path,
+        ],
+        cwd=exe_dir,
+        close_fds=True,
+    )
 
 
 def apply_downloaded_update(
@@ -235,6 +301,7 @@ def apply_downloaded_update(
     version_file: str,
     parent_pid: int | None = None,
 ) -> tuple[bool, str]:
+    del parent_pid  # wait by process image name instead (works with legacy exe names)
     canonical = canonical_exe_path(exe_dir)
     running = running_exe_path(exe_dir)
     download_path = canonical + DOWNLOAD_SUFFIX
@@ -243,27 +310,27 @@ def apply_downloaded_update(
     if os.path.getsize(download_path) < 1024 * 1024:
         return False, "Downloaded file is too small to be a valid build"
     script_path = os.path.join(exe_dir, "apply_update.ps1")
-    pid = parent_pid if parent_pid is not None else os.getpid()
+    log_path = os.path.join(exe_dir, APPLY_LOG_NAME)
     try:
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(f"Update requested for version {new_version}\n")
         _write_apply_script(
-            script_path, exe_dir, canonical, running, pid, new_version, version_file
+            script_path, exe_dir, canonical, running, new_version, version_file
         )
-        flags = 0
-        if sys.platform == "win32":
-            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        subprocess.Popen(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                script_path,
-            ],
-            cwd=exe_dir,
-            creationflags=flags,
-            close_fds=True,
-        )
+        _launch_apply_script(script_path, exe_dir)
+        time.sleep(1.5)
     except Exception as e:
         return False, f"Could not start updater: {e}"
-    return True, "Restarting to apply update…"
+    return True, "Installing update and restarting…"
+
+
+def read_apply_log(exe_dir: str, tail_lines: int = 20) -> str:
+    path = os.path.join(exe_dir, APPLY_LOG_NAME)
+    if not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        return "".join(lines[-tail_lines:]).strip()
+    except Exception:
+        return ""

@@ -1886,7 +1886,6 @@ class Api:
                 exe_dir,
                 st.get("latest") or "",
                 VERSION_FILE,
-                parent_pid=os.getpid(),
             )
             if not ok2:
                 return False, msg2
@@ -1896,8 +1895,9 @@ class Api:
                     _app_window.destroy()
                 except Exception:
                     pass
-            threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0)), daemon=True).start()
-            return True, msg2
+            # Updater script is already running detached; exit so it can replace the exe.
+            time.sleep(0.5)
+            os._exit(0)
         except Exception as e:
             return False, f"download_and_apply_update error: {e}"
 

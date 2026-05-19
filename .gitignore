@@ -4,6 +4,8 @@ dist/*.exe
 dist/*.download
 dist/*.bak
 dist/apply_update.ps1
+apply_update.ps1
+apply_update.log
 __pycache__/
 *.pyc
 .pytest_cache/

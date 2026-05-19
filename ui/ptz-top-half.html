@@ -2660,7 +2660,7 @@
         if (btn) { btn.disabled = false; btn.textContent = "Update now"; }
         return;
       }
-      showStreamToast(resp || "Restarting\u2026", "ok");
+      showStreamToast(resp || "Installing update\u2026 app will restart.", "ok");
     } catch (e) {
       showStreamToast("Update error: " + e, "error");
       if (btn) { btn.disabled = false; btn.textContent = "Update now"; }
