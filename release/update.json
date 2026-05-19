@@ -1,6 +1,6 @@
 {
-  "version": "3.4",
-  "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.4/PTZ-Control.exe",
-  "sha256": "53fd409aeb68b5e657c3ea083ae33c88ee59e4239e95076d7d1e551fde836931",
-  "release_notes": "GUI updater with progress window, Windows installer (PTZ-Control-Setup.exe) with optional WebView2, VC++ Redistributable, and FFmpeg, and reliable in-place updates."
+  "version": "3.5",
+  "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.5/PTZ-Control.exe",
+  "sha256": "51672bb2943ce9bf8e9824bfa537dc3ffdbace87380f69940adedbcafe069879",
+  "release_notes": "Startup: switcher connects first; dependent steps skip if switcher is offline; power-on hint and Restart app button. Settings always available when disconnected. Camera controls disable when offline; Edit stays enabled."
 }
