@@ -15,12 +15,11 @@ import tkinter as tk
 from tkinter import ttk
 
 from update_checker import (
-    APPLY_LOG_NAME,
     BAK_SUFFIX,
-    DOWNLOAD_SUFFIX,
-    EXE_NAME,
     canonical_exe_path,
     download_update,
+    get_update_work_dir,
+    staging_download_path,
     write_version_file,
 )
 
@@ -29,8 +28,8 @@ WAIT_PROCESS_SEC = 120
 SWAP_RETRIES = 60
 
 
-def _log(exe_dir: str, msg: str) -> None:
-    path = os.path.join(exe_dir, APPLY_LOG_NAME)
+def _log(work_dir: str, msg: str) -> None:
+    path = os.path.join(work_dir, "apply_update.log")
     line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n"
     try:
         with open(path, "a", encoding="utf-8") as f:
@@ -105,6 +104,10 @@ def run_update(job_path: str, ui: "UpdaterUI") -> None:
     with open(job_path, encoding="utf-8") as f:
         job = json.load(f)
     exe_dir = os.path.abspath(str(job.get("install_dir") or "").strip())
+    work_dir = os.path.abspath(
+        str(job.get("work_dir") or "").strip() or get_update_work_dir()
+    )
+    os.makedirs(work_dir, exist_ok=True)
     download_url = str(job.get("download_url") or "").strip()
     sha256 = str(job.get("sha256") or "").strip()
     version = str(job.get("version") or "").strip()
@@ -112,7 +115,7 @@ def run_update(job_path: str, ui: "UpdaterUI") -> None:
         raise ValueError("update_job.json missing install_dir, download_url, or version")
 
     canonical = canonical_exe_path(exe_dir)
-    download_path = canonical + DOWNLOAD_SUFFIX
+    download_path = staging_download_path()
     bak_path = canonical + BAK_SUFFIX
     version_file = os.path.join(exe_dir, "version.json")
 
@@ -122,7 +125,7 @@ def run_update(job_path: str, ui: "UpdaterUI") -> None:
     except Exception:
         pass
 
-    _log(exe_dir, f"GUI updater started for version {version}")
+    _log(work_dir, f"GUI updater started for version {version} (install={exe_dir})")
 
     ui.set_status("Downloading update…")
     ui.set_progress(0)
@@ -141,20 +144,23 @@ def run_update(job_path: str, ui: "UpdaterUI") -> None:
     ui.set_status("Installing update…")
     ui.set_progress(100)
 
-    _wait_for_exit(PROC_NAME, exe_dir, WAIT_PROCESS_SEC)
+    _wait_for_exit(PROC_NAME, work_dir, WAIT_PROCESS_SEC)
 
     if not os.path.isfile(download_path):
         raise RuntimeError("Downloaded update file missing before install")
 
-    if not _swap_exe(canonical, download_path, bak_path, exe_dir):
-        raise RuntimeError("Could not replace PTZ-Control.exe (file may still be in use)")
+    if not _swap_exe(canonical, download_path, bak_path, work_dir):
+        raise RuntimeError(
+            "Could not replace PTZ-Control.exe. The app may be installed under Program Files — "
+            "close PTZ-Control, then run PTZ-Control-Updater.exe as administrator from the install folder."
+        )
 
     write_version_file(version_file, version)
-    _log(exe_dir, "version.json updated")
+    _log(work_dir, "version.json updated")
 
     ui.set_status("Restarting PTZ-Control…")
-    _launch_app(canonical, exe_dir, exe_dir)
-    _log(exe_dir, "Update finished")
+    _launch_app(canonical, exe_dir, work_dir)
+    _log(work_dir, "Update finished")
 
 
 class UpdaterUI:
@@ -198,15 +204,16 @@ class UpdaterUI:
                 run_update(job_path, self)
                 self.root.after(0, self.show_success)
             except Exception as e:
-                exe_dir = os.path.dirname(job_path)
+                work_dir = get_update_work_dir()
                 try:
                     with open(job_path, encoding="utf-8") as f:
-                        exe_dir = os.path.abspath(
-                            str(json.load(f).get("install_dir") or exe_dir)
+                        data = json.load(f)
+                        work_dir = os.path.abspath(
+                            str(data.get("work_dir") or work_dir)
                         )
                 except Exception:
                     pass
-                _log(exe_dir, f"ERROR: {e}")
+                _log(work_dir, f"ERROR: {e}")
                 self.root.after(0, lambda: self.show_error(str(e)))
 
         import threading

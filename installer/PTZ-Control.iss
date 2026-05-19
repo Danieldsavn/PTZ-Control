@@ -1,6 +1,6 @@
 ; PTZ-Control Windows installer (Inno Setup 6)
 #define MyAppName "PTZ-Control"
-#define MyAppVersion "3.5"
+#define MyAppVersion "3.6"
 #define MyAppPublisher "PTZ-Control"
 #define MyAppExeName "PTZ-Control.exe"
 #define MyAppURL "https://github.com/Danieldsavn/PTZ-Control"
@@ -12,7 +12,7 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}/releases
-DefaultDirName={autopf}\{#MyAppName}
+DefaultDirName={localappdata}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\dist

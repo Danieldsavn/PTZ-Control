@@ -39,6 +39,7 @@ from midi_manager import (
 from update_checker import (
     DEFAULT_MANIFEST_URL,
     check_for_update,
+    get_update_work_dir,
     launch_gui_updater,
     write_update_job,
 )
@@ -1901,13 +1902,18 @@ class Api:
             if not st.get("update_available"):
                 return False, st.get("error") or "No update available"
             exe_dir = _exe_dir()
+            work_dir = get_update_work_dir()
             job = {
                 "download_url": st.get("download_url") or "",
                 "sha256": st.get("sha256") or "",
                 "version": st.get("latest") or "",
                 "install_dir": exe_dir,
+                "work_dir": work_dir,
             }
-            job_path = write_update_job(exe_dir, job)
+            try:
+                job_path = write_update_job(job)
+            except PermissionError as e:
+                return False, str(e)
             ok, msg = launch_gui_updater(exe_dir, job_path)
             if not ok:
                 return False, msg

@@ -26,6 +26,39 @@ DOWNLOAD_SUFFIX = ".download"
 BAK_SUFFIX = ".bak"
 REQUEST_TIMEOUT = 120
 APPLY_LOG_NAME = "apply_update.log"
+STAGING_EXE_NAME = "PTZ-Control.exe.download"
+
+
+def get_update_work_dir() -> str:
+    """Writable folder for update job, log, and download staging (not beside Program Files exe)."""
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    path = os.path.join(base, "PTZ-Control")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def update_job_path() -> str:
+    return os.path.join(get_update_work_dir(), UPDATE_JOB_NAME)
+
+
+def apply_log_path() -> str:
+    return os.path.join(get_update_work_dir(), APPLY_LOG_NAME)
+
+
+def staging_download_path() -> str:
+    return os.path.join(get_update_work_dir(), STAGING_EXE_NAME)
+
+
+def dir_is_writable(dir_path: str) -> bool:
+    try:
+        os.makedirs(dir_path, exist_ok=True)
+        test = os.path.join(dir_path, ".ptz_write_test")
+        with open(test, "w", encoding="utf-8") as f:
+            f.write("ok")
+        os.remove(test)
+        return True
+    except OSError:
+        return False
 
 
 def canonical_exe_path(exe_dir: str) -> str:
@@ -186,12 +219,39 @@ def write_version_file(version_path: str, version: str) -> None:
         pass
 
 
-def write_update_job(exe_dir: str, job: dict[str, Any]) -> str:
-    path = os.path.join(exe_dir, UPDATE_JOB_NAME)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(job, f, indent=2)
-        f.write("\n")
+def write_update_job(job: dict[str, Any]) -> str:
+    work_dir = get_update_work_dir()
+    path = os.path.join(work_dir, UPDATE_JOB_NAME)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(job, f, indent=2)
+            f.write("\n")
+    except PermissionError as e:
+        raise PermissionError(
+            f"Cannot write update job ({path}): {e}"
+        ) from e
     return path
+
+
+def _spawn_updater_process(updater: str, job_path: str, work_dir: str, elevated: bool) -> bool:
+    if sys.platform != "win32":
+        return False
+    if elevated:
+        import ctypes
+
+        params = f'--job "{job_path}"'
+        rc = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", updater, params, work_dir, 1
+        )
+        return rc > 32
+    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(
+        [updater, "--job", job_path],
+        cwd=work_dir,
+        close_fds=True,
+        creationflags=flags,
+    )
+    return True
 
 
 def launch_gui_updater(exe_dir: str, job_path: str) -> tuple[bool, str]:
@@ -202,22 +262,33 @@ def launch_gui_updater(exe_dir: str, job_path: str) -> tuple[bool, str]:
             "PTZ-Control-Updater.exe was not found beside the app. "
             "Install the latest release using PTZ-Control-Setup.exe.",
         )
-    log_path = os.path.join(exe_dir, APPLY_LOG_NAME)
+    work_dir = get_update_work_dir()
+    log_path = apply_log_path()
     try:
         with open(log_path, "w", encoding="utf-8") as f:
-            f.write(f"Update job started: {job_path}\n")
+            f.write(f"Update job started: {job_path}\ninstall_dir={exe_dir}\n")
     except Exception:
         pass
-    if sys.platform == "win32":
-        cmd = f'start "" "{updater}" --job "{job_path}"'
-        subprocess.Popen(cmd, shell=True, cwd=exe_dir)
-        time.sleep(1)
-        return True, "Updater is installing… the app will restart."
-    return False, "Updates are only supported on Windows."
+    if sys.platform != "win32":
+        return False, "Updates are only supported on Windows."
+    need_elevation = not dir_is_writable(exe_dir)
+    if not _spawn_updater_process(updater, job_path, work_dir, elevated=need_elevation):
+        return (
+            False,
+            "Could not start the updater. Try right-clicking PTZ-Control and Run as administrator.",
+        )
+    time.sleep(1)
+    if need_elevation:
+        return (
+            True,
+            "Updater is installing (admin approval may be required)… the app will restart.",
+        )
+    return True, "Updater is installing… the app will restart."
 
 
-def read_apply_log(exe_dir: str, tail_lines: int = 20) -> str:
-    path = os.path.join(exe_dir, APPLY_LOG_NAME)
+def read_apply_log(exe_dir: str = "", tail_lines: int = 20) -> str:
+    del exe_dir
+    path = apply_log_path()
     if not os.path.isfile(path):
         return ""
     try:
