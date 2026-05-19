@@ -1,6 +1,11 @@
 import os
 import subprocess
 import sys
+
+# PyWebView uses pythonnet; frozen restarts need .NET Framework selected before clr loads.
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
+
 import json
 import socket
 import threading
@@ -41,6 +46,7 @@ from update_checker import (
     check_for_update,
     get_update_work_dir,
     launch_gui_updater,
+    launch_windows_exe,
     write_update_job,
 )
 
@@ -1812,16 +1818,11 @@ class Api:
     def restart_app(self):
         """Relaunch PTZ-Control (used when switcher was off at startup)."""
         try:
-            exe = sys.executable
-            work_dir = os.path.dirname(os.path.abspath(exe))
+            exe = os.path.abspath(sys.executable)
+            work_dir = os.path.dirname(exe)
             if getattr(sys, "frozen", False):
-                subprocess.Popen(
-                    [exe],
-                    cwd=work_dir,
-                    close_fds=True,
-                    creationflags=subprocess.DETACHED_PROCESS
-                    | subprocess.CREATE_NEW_PROCESS_GROUP,
-                )
+                if not launch_windows_exe(exe, work_dir):
+                    return False, "Could not restart PTZ-Control."
             else:
                 subprocess.Popen(
                     [sys.executable, os.path.abspath(__file__)],

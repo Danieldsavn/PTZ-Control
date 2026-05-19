@@ -1,6 +1,6 @@
 {
-  "version": "3.6",
-  "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.6/PTZ-Control.exe",
-  "sha256": "32f261b20e1c0584fbddd9e4725865ac313f2912ba8eb330eeb19eadb5c144af",
-  "release_notes": "Fix in-app updates when installed under Program Files: update job and download use AppData; updater requests admin when needed. New installs default to AppData folder."
+  "version": "3.7",
+  "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.7/PTZ-Control.exe",
+  "sha256": "61deca905181b85cb8f89be7dee00a28e2a71bdee28022c8c2cf1e2febc84832",
+  "release_notes": "Fix Restart app crash (.NET/pythonnet). Restart and post-update launch use ShellExecute; set PYTHONNET_RUNTIME for WebView2."
 }

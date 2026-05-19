@@ -49,6 +49,21 @@ def staging_download_path() -> str:
     return os.path.join(get_update_work_dir(), STAGING_EXE_NAME)
 
 
+def launch_windows_exe(exe_path: str, work_dir: str) -> bool:
+    """Start a GUI exe the same way as double-click (avoids broken pythonnet on DETACHED_PROCESS)."""
+    exe_path = os.path.abspath(exe_path)
+    work_dir = os.path.abspath(work_dir or os.path.dirname(exe_path))
+    if sys.platform != "win32":
+        subprocess.Popen([exe_path], cwd=work_dir, close_fds=True)
+        return True
+    import ctypes
+
+    rc = ctypes.windll.shell32.ShellExecuteW(
+        None, "open", exe_path, None, work_dir, 1
+    )
+    return rc > 32
+
+
 def dir_is_writable(dir_path: str) -> bool:
     try:
         os.makedirs(dir_path, exist_ok=True)

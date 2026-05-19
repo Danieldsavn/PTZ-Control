@@ -19,6 +19,7 @@ from update_checker import (
     canonical_exe_path,
     download_update,
     get_update_work_dir,
+    launch_windows_exe,
     staging_download_path,
     write_version_file,
 )
@@ -79,21 +80,15 @@ def _swap_exe(canonical: str, download: str, bak: str, exe_dir: str) -> bool:
     return False
 
 
-def _launch_app(canonical: str, work_dir: str, exe_dir: str) -> None:
-    _log(exe_dir, f"Launching: {canonical}")
-    try:
-        subprocess.Popen(
-            [canonical],
-            cwd=work_dir,
-            close_fds=True,
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-        )
-    except Exception as e:
-        _log(exe_dir, f"Start-Process failed: {e}; trying cmd start")
+def _launch_app(canonical: str, work_dir: str, log_dir: str) -> None:
+    _log(log_dir, f"Launching: {canonical}")
+    install_dir = os.path.dirname(canonical)
+    if not launch_windows_exe(canonical, install_dir):
+        _log(log_dir, "ShellExecute launch failed; trying cmd start")
         subprocess.Popen(
             f'cmd /c start "" "{canonical}"',
             shell=True,
-            cwd=work_dir,
+            cwd=install_dir,
         )
     time.sleep(2)
     if not _process_running(PROC_NAME):
