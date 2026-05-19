@@ -427,6 +427,11 @@
       background: #e2e8f0;
       transform: none;
     }
+    .streamBar button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
     .streamBar .streamSettingsBtn {
       font-size: 12px;
       padding: 6px 12px;
@@ -1653,6 +1658,7 @@
 
   let streamToastTimer = null;
   const settingsDirty = { stream: false, switcher: false, general: false, midi: false };
+  let settingsLoadSilent = false;
   let settingsActiveTab = "stream";
   const STARTUP_ISSUE_MSG = {
     cam1: "Camera 1 is not reachable",
@@ -1682,6 +1688,7 @@
   }
 
   function markSettingsDirty(tab) {
+    if (settingsLoadSilent) return;
     if (!tab || !(tab in settingsDirty)) return;
     settingsDirty[tab] = true;
     updateSettingsDirtyUi();
@@ -1719,14 +1726,23 @@
       overlay.classList.add("open");
       overlay.setAttribute("aria-hidden", "false");
       resetSettingsScroll();
-      loadObsConfig().then(function () {
+      settingsLoadSilent = true;
+      clearSettingsDirty();
+      Promise.all([
+        loadObsConfig(),
+        loadSettingsCameraIps(),
+        loadSettingsPresetCount(),
+        loadSettingsVersion(),
+        refreshSwitcherInfo()
+      ]).then(function () {
+        settingsLoadSilent = false;
+        clearSettingsDirty();
         switchSettingsTab(tabName);
-        loadSettingsCameraIps();
-        loadSettingsPresetCount();
-        loadSettingsVersion();
-        refreshSwitcherInfo();
         if (tabName === "midi") loadMidiSettings();
         if (tabName === "stream") { loadStreamSettings(); refreshStreamStatus(); }
+      }).catch(function () {
+        settingsLoadSilent = false;
+        clearSettingsDirty();
       });
     } else {
       switchSettingsTab(tabName);
@@ -1749,16 +1765,8 @@
   }
 
   function requestCloseSettings() {
-    if (!anySettingsDirty()) {
-      toggleObsSettings(true);
-      return;
-    }
-    if (window.confirm("Save changes before closing Settings?")) {
-      saveAllDirtySettings().then(function () { toggleObsSettings(true); });
-    } else {
-      clearSettingsDirty();
-      toggleObsSettings(true);
-    }
+    clearSettingsDirty();
+    toggleObsSettings(true);
   }
 
   function wireSettingsDirtyListeners() {
@@ -2283,7 +2291,6 @@
     const el = dom.obsSimpleModeToggle;
     if (!el) return;
     const on = !el.classList.contains("on");
-    markSettingsDirty("general");
     applySimpleMode(on);
     if (window.pywebview?.api?.set_obs_simple_mode) {
       window.pywebview.api.set_obs_simple_mode(on).catch(function() {});
@@ -2345,15 +2352,30 @@
   }
 
   function updateStreamControls(obsStatus) {
-    const isLive = !!(obsStatus && obsStatus.streamLive);
+    const connected = !!(obsStatus && obsStatus.connected);
+    const isLive = connected && !!(obsStatus && obsStatus.streamLive);
     const liveBtn = dom.streamGoLiveBtn;
-    if (liveBtn) liveBtn.classList.toggle("on", isLive);
+    if (liveBtn) {
+      liveBtn.classList.toggle("on", isLive);
+      liveBtn.disabled = !connected;
+      liveBtn.setAttribute("aria-disabled", connected ? "false" : "true");
+    }
     const stopBtn = dom.streamStopBtn;
     if (stopBtn) {
-      stopBtn.disabled = !isLive;
+      stopBtn.disabled = !connected || !isLive;
       stopBtn.classList.toggle("on", isLive);
-      stopBtn.setAttribute("aria-disabled", isLive ? "false" : "true");
+      stopBtn.setAttribute("aria-disabled", stopBtn.disabled ? "true" : "false");
     }
+    const switcherBtns = [
+      dom.usk1OnBtn, dom.usk1OffBtn, dom.dsk1OnBtn, dom.dsk1OffBtn,
+      dom.stillSidBtn, dom.stillNateBtn, dom.stillCecilBtn,
+      dom.splitviewOnBtn, dom.splitviewOffBtn
+    ];
+    switcherBtns.forEach(function (btn) {
+      if (!btn) return;
+      btn.disabled = !connected;
+      btn.setAttribute("aria-disabled", connected ? "false" : "true");
+    });
     const uskOn = !!(obsStatus && obsStatus.usk1On);
     const dskOn = !!(obsStatus && obsStatus.dsk1On);
     if (dom.usk1OnBtn) {
@@ -2380,6 +2402,10 @@
 
   async function streamGoLive() {
     try {
+      if (!switcherConnected) {
+        showStreamToast("Switcher not connected", "error");
+        return;
+      }
       const api = window.pywebview?.api;
       if (!api?.switcher_stream_go_live) return;
       const [ok, resp] = await api.switcher_stream_go_live();
@@ -2427,8 +2453,17 @@
     await streamStop();
   }
 
+  function requireSwitcherConnected() {
+    if (!switcherConnected) {
+      showStreamToast("Switcher not connected", "error");
+      return false;
+    }
+    return true;
+  }
+
   async function streamStop() {
     try {
+      if (!requireSwitcherConnected()) return;
       const api = window.pywebview?.api;
       if (!api?.switcher_stream_stop) return;
       const [ok, resp] = await api.switcher_stream_stop();
@@ -2441,6 +2476,7 @@
 
   async function usk1On() {
     try {
+      if (!requireSwitcherConnected()) return;
       const api = window.pywebview?.api;
       if (!api?.switcher_usk1_on) return;
       const [ok, resp] = await api.switcher_usk1_on();
@@ -2450,6 +2486,7 @@
   }
   async function usk1Off() {
     try {
+      if (!requireSwitcherConnected()) return;
       const api = window.pywebview?.api;
       if (!api?.switcher_usk1_off) return;
       const [ok, resp] = await api.switcher_usk1_off();
@@ -2459,6 +2496,7 @@
   }
   async function dsk1On() {
     try {
+      if (!requireSwitcherConnected()) return;
       const api = window.pywebview?.api;
       if (!api?.switcher_dsk1_on) return;
       const [ok, resp] = await api.switcher_dsk1_on();
@@ -2468,6 +2506,7 @@
   }
   async function dsk1Off() {
     try {
+      if (!requireSwitcherConnected()) return;
       const api = window.pywebview?.api;
       if (!api?.switcher_dsk1_off) return;
       const [ok, resp] = await api.switcher_dsk1_off();
@@ -2478,6 +2517,7 @@
 
   async function splitviewOn() {
     try {
+      if (!requireSwitcherConnected()) return;
       const api = window.pywebview?.api;
       if (!api?.switcher_splitview_on) return;
       const [ok, resp] = await api.switcher_splitview_on();
@@ -2490,6 +2530,7 @@
 
   async function splitviewOff() {
     try {
+      if (!requireSwitcherConnected()) return;
       const api = window.pywebview?.api;
       if (!api?.switcher_splitview_off) return;
       const [ok, resp] = await api.switcher_splitview_off();
@@ -2502,6 +2543,7 @@
 
   async function activateStill(stillIndex) {
     try {
+      if (!requireSwitcherConnected()) return;
       const api = window.pywebview?.api;
       if (!api?.switcher_activate_still) return;
       const [ok, resp] = await api.switcher_activate_still(stillIndex);
@@ -2655,7 +2697,6 @@
     el.classList.toggle("on", on);
     el.setAttribute("aria-pressed", on ? "true" : "false");
     if (state.obsConfig) state.obsConfig.update_check_enabled = on;
-    markSettingsDirty("general");
     await persistUiPrefs({ update_check_enabled: on });
   }
 
@@ -3304,27 +3345,39 @@
     if (!panel || !overlay) return;
     const isVisible = overlay.classList.contains("open");
     if (isVisible || forceClose) {
-      if (isVisible && !forceClose && anySettingsDirty()) {
-        requestCloseSettings();
-        return;
-      }
       panel.classList.remove("visible");
       overlay.classList.remove("open");
       overlay.setAttribute("aria-hidden", "true");
+      clearSettingsDirty();
     } else {
       panel.classList.add("visible");
       overlay.classList.add("open");
       overlay.setAttribute("aria-hidden", "false");
       resetSettingsScroll();
+      settingsLoadSilent = true;
       clearSettingsDirty();
-      loadObsConfig().then(function () {
-        switchSettingsTab(normalizeSettingsTab(state.obsConfig && state.obsConfig.settings_last_tab));
-      });
-      loadSettingsCameraIps();
-      loadSettingsPresetCount();
-      loadSettingsVersion();
-      refreshSwitcherInfo();
       wireSettingsDirtyListeners();
+      Promise.all([
+        loadObsConfig(),
+        loadSettingsCameraIps(),
+        loadSettingsPresetCount(),
+        loadSettingsVersion(),
+        refreshSwitcherInfo()
+      ]).then(function () {
+        settingsLoadSilent = false;
+        clearSettingsDirty();
+        switchSettingsTab(normalizeSettingsTab(state.obsConfig && state.obsConfig.settings_last_tab));
+        if (normalizeSettingsTab(state.obsConfig && state.obsConfig.settings_last_tab) === "stream") {
+          loadStreamSettings();
+          refreshStreamStatus();
+        }
+        if (normalizeSettingsTab(state.obsConfig && state.obsConfig.settings_last_tab) === "midi") {
+          loadMidiSettings();
+        }
+      }).catch(function () {
+        settingsLoadSilent = false;
+        clearSettingsDirty();
+      });
       if (window.pywebview?.api?.get_camera_titles) {
         window.pywebview.api.get_camera_titles().then(function (res) {
           if (res[0] && res[1]) updateSwitcherSettingsLabels(res[1]);
@@ -3370,7 +3423,7 @@
       if (ok && n) {
         const val = Math.max(2, Math.min(12, parseInt(n, 10) || 6));
         const step2 = [2,4,6,8,10,12].includes(val) ? val : 6;
-        if (dom.settingsPresetCount) { dom.settingsPresetCount.value = step2; dom.settingsPresetCount.dispatchEvent(new Event("input")); }
+        if (dom.settingsPresetCount) dom.settingsPresetCount.value = step2;
         if (dom.settingsPresetCountValue) dom.settingsPresetCountValue.textContent = step2;
       }
     } catch (e) {}
@@ -3395,7 +3448,7 @@
         if (dom.obsPort) dom.obsPort.value = config.port || "";
         if (dom.stream1KeyInput && config.stream1_key) dom.stream1KeyInput.value = config.stream1_key;
         const hold = Math.max(0, Math.min(5, parseInt(config.switching_hold_seconds, 10) || 0));
-        if (dom.obsHoldTime) { dom.obsHoldTime.value = hold; dom.obsHoldTime.dispatchEvent(new Event("input")); }
+        if (dom.obsHoldTime) dom.obsHoldTime.value = hold;
         if (dom.obsHoldTimeValue) dom.obsHoldTimeValue.textContent = hold + " s";
         if (dom.obsSimpleModeToggle) {
           const simpleOn = dom.top && dom.top.classList.contains("simpleMode");
@@ -3556,6 +3609,7 @@
     await loadCameraTitles();
     updateCameraCutUi("cam1");
     updateCameraCutUi("cam2");
+    updateStreamControls({ connected: false });
     pollObsStatus();
     setInterval(pollObsStatus, 300);
     loadCameraPreviews();
