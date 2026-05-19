@@ -1,6 +1,6 @@
 {
-  "version": "3.7",
-  "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.7/PTZ-Control.exe",
-  "sha256": "61deca905181b85cb8f89be7dee00a28e2a71bdee28022c8c2cf1e2febc84832",
-  "release_notes": "Fix Restart app crash (.NET/pythonnet). Restart and post-update launch use ShellExecute; set PYTHONNET_RUNTIME for WebView2."
+  "version": "3.8",
+  "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.8/PTZ-Control.exe",
+  "sha256": "571ab2e8297b7bf2fc1dd83f76e1309bf697f70b058cf3051c1873f64f3b5639",
+  "release_notes": "Fix Restart app crash (_cffi_backend / pythonnet): bundle cffi for PyInstaller, force Edge WebView2 GUI, delay relaunch, skip winforms backend."
 }

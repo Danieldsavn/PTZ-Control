@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
-$Version = "3.6"
+$Version = "3.8"
 Write-Host "Building PTZ-Control v$Version"
 
 # Sync version.json

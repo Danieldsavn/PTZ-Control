@@ -49,12 +49,20 @@ def staging_download_path() -> str:
     return os.path.join(get_update_work_dir(), STAGING_EXE_NAME)
 
 
-def launch_windows_exe(exe_path: str, work_dir: str) -> bool:
-    """Start a GUI exe the same way as double-click (avoids broken pythonnet on DETACHED_PROCESS)."""
+def launch_windows_exe(
+    exe_path: str, work_dir: str, delay_seconds: int = 0
+) -> bool:
+    """Start a GUI exe like double-click; optional delay helps PyInstaller one-file restart."""
     exe_path = os.path.abspath(exe_path)
     work_dir = os.path.abspath(work_dir or os.path.dirname(exe_path))
     if sys.platform != "win32":
         subprocess.Popen([exe_path], cwd=work_dir, close_fds=True)
+        return True
+    if delay_seconds > 0:
+        # Wait for parent process to exit and release temp extract folder before relaunch.
+        n = max(2, int(delay_seconds) + 1)
+        cmd = f'cmd /c "ping 127.0.0.1 -n {n} >nul & start "" "{exe_path}""'
+        subprocess.Popen(cmd, shell=True, cwd=work_dir)
         return True
     import ctypes
 
