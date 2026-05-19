@@ -27,8 +27,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "webview2"; Description: "Install Microsoft WebView2 Runtime (required for the app UI, skipped if already installed)"; GroupDescription: "Additional components"
-Name: "vcredist"; Description: "Install Visual C++ 2015-2022 Redistributable (x64) if needed"; GroupDescription: "Additional components"
+Name: "webview2"; Description: "Install Microsoft WebView2 Runtime (required for the app UI)"; GroupDescription: "Additional components"
+Name: "vcredist"; Description: "Install Visual C++ 2015-2022 Redistributable (x64)"; GroupDescription: "Additional components"
 Name: "ffmpeg"; Description: "Install FFmpeg for live camera previews (optional)"; GroupDescription: "Additional components"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts"
 
@@ -56,6 +56,13 @@ Type: files; Name: "{app}\*.download"
 Type: files; Name: "{app}\*.bak"
 
 [Code]
+; Task indices must match [Tasks] order above
+const
+  TaskWebView2 = 0;
+  TaskVCRedist = 1;
+  TaskFFmpeg = 2;
+  TaskDesktopIcon = 3;
+
 function CompareVersion(V1, V2: String): Integer;
 var
   P, N1, N2: Integer;
@@ -98,9 +105,25 @@ begin
   Result := NeedsWebView2 and WizardIsTaskSelected('webview2');
 end;
 
+function VCRedistInstalled: Boolean;
+var Installed: Cardinal;
+begin
+  if RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) then
+  begin
+    Result := (Installed = 1);
+    Exit;
+  end;
+  if RegQueryDWordValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) then
+  begin
+    Result := (Installed = 1);
+    Exit;
+  end;
+  Result := RegKeyExists(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64');
+end;
+
 function NeedsVCRedist: Boolean;
 begin
-  Result := not RegKeyExists(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64');
+  Result := not VCRedistInstalled;
 end;
 
 function NeedsVCRedistAndTask: Boolean;
@@ -108,11 +131,70 @@ begin
   Result := NeedsVCRedist and WizardIsTaskSelected('vcredist');
 end;
 
+function FFmpegAlreadyAvailable: Boolean;
+var AppDir: String;
+  ResultCode: Integer;
+begin
+  AppDir := ExpandConstant('{app}');
+  if (AppDir <> '') and FileExists(AppDir + '\tools\ffmpeg.exe') then
+  begin
+    Result := True;
+    Exit;
+  end;
+  if Exec('cmd.exe', '/c where ffmpeg >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Result := (ResultCode = 0)
+  else
+    Result := False;
+end;
+
+function NeedsFFmpeg: Boolean;
+begin
+  Result := not FFmpegAlreadyAvailable;
+end;
+
+function ShouldHideTask(Index: Integer): Boolean;
+begin
+  case Index of
+    TaskWebView2: Result := not NeedsWebView2;
+    TaskVCRedist: Result := not NeedsVCRedist;
+    TaskFFmpeg: Result := not NeedsFFmpeg;
+  else
+    Result := False;
+  end;
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+var AnyDepVisible: Boolean;
+begin
+  Result := False;
+  if PageID = wpSelectTasks then
+  begin
+    AnyDepVisible := NeedsWebView2 or NeedsVCRedist or NeedsFFmpeg;
+    { If every dependency is already satisfied, skip straight past this page (desktop shortcut uses default). }
+    if not AnyDepVisible then
+      Result := True;
+  end;
+end;
+
 procedure CurPageChanged(CurPageID: Integer);
+var TasksToSelect: String;
 begin
   if CurPageID = wpSelectTasks then
   begin
-    WizardSelectTasks('webview2 vcredist ffmpeg desktopicon');
+    TasksToSelect := 'desktopicon';
+    if NeedsWebView2 then
+      TasksToSelect := TasksToSelect + ' webview2';
+    if NeedsVCRedist then
+      TasksToSelect := TasksToSelect + ' vcredist';
+    if NeedsFFmpeg then
+      TasksToSelect := TasksToSelect + ' ffmpeg';
+    WizardSelectTasks(Trim(TasksToSelect));
+  end
+  else if CurPageID = wpReady then
+  begin
+    { Tasks page was skipped — ensure desktop shortcut stays enabled by default }
+    if not WizardIsTaskSelected('desktopicon') then
+      WizardSelectTasks('desktopicon');
   end;
 end;
 
@@ -121,13 +203,13 @@ begin
   Result := True;
   if CurPageID = wpReady then
   begin
-    if NeedsWebView2 and not WizardIsTaskSelected('webview2') then
+    if NeedsWebView2 and (not ShouldHideTask(TaskWebView2)) and not WizardIsTaskSelected('webview2') then
     begin
       if MsgBox('PTZ-Control requires the Microsoft WebView2 Runtime to display its interface.' + #13#10 +
         'Install WebView2 is unchecked. Continue anyway?', mbConfirmation, MB_YESNO) = IDNO then
         Result := False;
     end;
-    if NeedsVCRedist and not WizardIsTaskSelected('vcredist') then
+    if NeedsVCRedist and (not ShouldHideTask(TaskVCRedist)) and not WizardIsTaskSelected('vcredist') then
     begin
       if MsgBox('Visual C++ Redistributable is recommended. The app may not start without it.' + #13#10 +
         'Continue without installing it?', mbConfirmation, MB_YESNO) = IDNO then

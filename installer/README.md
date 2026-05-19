@@ -27,9 +27,15 @@ Output: `dist\PTZ-Control-Setup.exe`
 
 ## User choices during install
 
-On the **Additional components** step, users can approve or skip:
+The installer detects what is already on the PC and only offers missing components:
 
-- WebView2 (required — warned if skipped)
-- VC++ Redistributable (recommended — warned if skipped)
-- FFmpeg (optional previews)
-- Desktop shortcut
+| Component | How it is detected | If already present |
+|-----------|-------------------|-------------------|
+| WebView2 | Registry version ≥ 96.0.1054.62 | Not shown |
+| VC++ 2015–2022 x64 | Visual Studio runtime registry key | Not shown |
+| FFmpeg | Bundled `tools\ffmpeg.exe` or `ffmpeg` on PATH | Not shown |
+| Desktop shortcut | Always offered when the tasks page is shown | — |
+
+If WebView2, VC++, and FFmpeg are all already satisfied, the **Additional components** page is skipped (desktop shortcut remains on by default).
+
+Shown items are pre-selected; the user can uncheck optional items before installing.
