@@ -56,13 +56,6 @@ Type: files; Name: "{app}\*.download"
 Type: files; Name: "{app}\*.bak"
 
 [Code]
-; Task indices must match [Tasks] order above
-const
-  TaskWebView2 = 0;
-  TaskVCRedist = 1;
-  TaskFFmpeg = 2;
-  TaskDesktopIcon = 3;
-
 function CompareVersion(V1, V2: String): Integer;
 var
   P, N1, N2: Integer;
@@ -154,10 +147,11 @@ end;
 
 function ShouldHideTask(Index: Integer): Boolean;
 begin
+  { Task order: 0=webview2, 1=vcredist, 2=ffmpeg, 3=desktopicon }
   case Index of
-    TaskWebView2: Result := not NeedsWebView2;
-    TaskVCRedist: Result := not NeedsVCRedist;
-    TaskFFmpeg: Result := not NeedsFFmpeg;
+    0: Result := not NeedsWebView2;
+    1: Result := not NeedsVCRedist;
+    2: Result := not NeedsFFmpeg;
   else
     Result := False;
   end;
@@ -203,13 +197,13 @@ begin
   Result := True;
   if CurPageID = wpReady then
   begin
-    if NeedsWebView2 and (not ShouldHideTask(TaskWebView2)) and not WizardIsTaskSelected('webview2') then
+    if NeedsWebView2 and (not ShouldHideTask(0)) and not WizardIsTaskSelected('webview2') then
     begin
       if MsgBox('PTZ-Control requires the Microsoft WebView2 Runtime to display its interface.' + #13#10 +
         'Install WebView2 is unchecked. Continue anyway?', mbConfirmation, MB_YESNO) = IDNO then
         Result := False;
     end;
-    if NeedsVCRedist and (not ShouldHideTask(TaskVCRedist)) and not WizardIsTaskSelected('vcredist') then
+    if NeedsVCRedist and (not ShouldHideTask(1)) and not WizardIsTaskSelected('vcredist') then
     begin
       if MsgBox('Visual C++ Redistributable is recommended. The app may not start without it.' + #13#10 +
         'Continue without installing it?', mbConfirmation, MB_YESNO) = IDNO then
