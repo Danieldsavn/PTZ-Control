@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Camera Control</title>
+  <title>PTZ-Control</title>
   <style>
     /* Church website inspired styling - clean, professional, readable */
     html, body { 
@@ -580,6 +580,12 @@
       padding: 8px 14px;
     }
     button.cut:hover { background: #b91c1c; }
+    button.cut:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+      opacity: 0.65;
+    }
+    button.cut:disabled:hover { background: #94a3b8; }
 
     .grid2 {
       display: grid;
@@ -865,6 +871,53 @@
     .startupStepAction:hover {
       background: rgba(255, 255, 255, 0.22);
     }
+    .startupIssues {
+      display: none;
+      margin-top: 20px;
+      padding: 14px 16px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.25);
+      text-align: left;
+    }
+    .startupIssuesTitle {
+      margin: 0 0 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #fcd34d;
+    }
+    .startupIssuesList {
+      margin: 0;
+      padding: 0 0 0 18px;
+      font-size: 13px;
+      color: rgba(226, 232, 240, 0.9);
+    }
+    .startupIssuesList li { margin: 6px 0; }
+    .startupActions {
+      display: none;
+      margin-top: 20px;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .startupActions button {
+      padding: 10px 22px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      border: none;
+    }
+    .startupContinueBtn {
+      background: #d4a853;
+      color: #0f2744;
+    }
+    .startupContinueBtn:hover { background: #e4bc6a; }
+    .startupSettingsBtn {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+    }
+    .startupSettingsBtn:hover { background: rgba(255, 255, 255, 0.25); }
     .startupStepIcon {
       flex: 0 0 22px;
       width: 22px;
@@ -1187,8 +1240,16 @@
 <body>
   <div id="startupSplash" class="startupSplash" aria-live="polite" aria-busy="true">
     <div class="startupSplashInner">
-      <h1 class="startupTitle">Preparing the table</h1>
+      <h1 class="startupTitle" id="startupTitle">Preparing the table</h1>
       <ul class="startupSteps" id="startupSteps"></ul>
+      <div id="startupIssues" class="startupIssues" aria-live="polite">
+        <p class="startupIssuesTitle">Some steps could not complete:</p>
+        <ul class="startupIssuesList" id="startupIssuesList"></ul>
+      </div>
+      <div id="startupActions" class="startupActions">
+        <button type="button" class="startupContinueBtn" id="startupContinueBtn">Continue</button>
+        <button type="button" class="startupSettingsBtn" id="startupSettingsBtn">Settings</button>
+      </div>
     </div>
   </div>
   <div id="welcomeInfo" class="welcomeInfoOverlay" aria-hidden="true" onclick="closeWelcomeInfo()">
@@ -1238,7 +1299,7 @@
   </div>
   <div class="top">
     <div class="titleBar pywebview-drag-region">
-      <span class="appTitle">Camera Control</span>
+      <span class="appTitle">PTZ-Control</span>
       <span class="winBtns">
         <button type="button" class="winBtn" title="Minimize" onclick="windowMinimize()">&#x2013;</button>
         <button type="button" class="winBtn" title="Fullscreen" onclick="windowToggleFullscreen()">&#x2922;</button>
@@ -1300,7 +1361,7 @@
           <div class="obsCutSlot hideInSimpleMode">
             <span class="obsConnecting" id="cam1ObsConnecting"><span class="obsSpinner"></span> Connecting</span>
             <span class="obsConnected" id="cam1ObsConnected" style="display:none;">Connected</span>
-            <button class="cut" onclick="obsCut('cam1')" id="cam1CutBtn" style="display:none;">CUT</button>
+            <button class="cut" onclick="obsCut('cam1')" id="cam1CutBtn" disabled>CUT</button>
           </div>
           <button class="ghost editBtn" onclick="toggleEdit('cam1')">Edit</button>
           <div class="ip">
@@ -1382,7 +1443,7 @@
           <div class="obsCutSlot hideInSimpleMode">
             <span class="obsConnecting" id="cam2ObsConnecting"><span class="obsSpinner"></span> Connecting</span>
             <span class="obsConnected" id="cam2ObsConnected" style="display:none;">Connected</span>
-            <button class="cut" onclick="obsCut('cam2')" id="cam2CutBtn" style="display:none;">CUT</button>
+            <button class="cut" onclick="obsCut('cam2')" id="cam2CutBtn" disabled>CUT</button>
           </div>
           <button class="ghost editBtn" onclick="toggleEdit('cam2')">Edit</button>
           <div class="ip">
@@ -1593,6 +1654,17 @@
   let streamToastTimer = null;
   const settingsDirty = { stream: false, switcher: false, general: false, midi: false };
   let settingsActiveTab = "stream";
+  const STARTUP_ISSUE_MSG = {
+    cam1: "Camera 1 is not reachable",
+    cam2: "Camera 2 is not reachable",
+    switcher: "Switcher is not connected",
+    usk: "Upstream key settings could not be verified",
+    multisource: "Multisource layout could not be configured",
+    dsk: "Downstream key could not be set to Still 1",
+    streamui: "Could not read lyrics, title, or still status"
+  };
+  let switcherConnected = false;
+  let appInitPromise = null;
   const STARTUP_STEP_SETTINGS_TAB = {
     cam1: "general", cam2: "general", switcher: "switcher",
     usk: "switcher", multisource: "switcher", dsk: "switcher", streamui: "stream"
@@ -2096,41 +2168,28 @@
   }
 
   // -------- OBS Status & Control --------
-  function updateObsBar(cam, obsStatus) {
-    const bar = dom[cam + "ObsBar"];
-    const label = dom[cam + "ObsLabel"];
+  function updateCameraCutUi(cam) {
     const cutBtn = dom[cam + "CutBtn"];
     const connectingEl = dom[cam + "ObsConnecting"];
     const connectedEl = dom[cam + "ObsConnected"];
+    const camOnline = !!cameraWasOnline[cam];
+    if (connectingEl) connectingEl.style.display = camOnline ? "none" : "inline-flex";
+    if (connectedEl) connectedEl.style.display = "none";
+    if (cutBtn) cutBtn.disabled = !switcherConnected;
+  }
+
+  function updateObsBar(cam, obsStatus) {
+    const bar = dom[cam + "ObsBar"];
+    const label = dom[cam + "ObsLabel"];
     if (!bar || !label) return;
 
     if (!obsStatus || !obsStatus.connected) {
       bar.className = "obsBar disconnected";
       label.textContent = "Switcher: Disconnected";
-      obsConnectedShown[cam] = false;
-      if (obsConnectedHideTimers[cam]) { clearTimeout(obsConnectedHideTimers[cam]); obsConnectedHideTimers[cam] = null; }
-      if (connectingEl) connectingEl.style.display = "inline-flex";
-      if (connectedEl) connectedEl.style.display = "none";
-      if (cutBtn) cutBtn.style.display = "none";
       return;
     }
 
     const camStatus = obsStatus.cams?.[cam] || { program: false, preview: false };
-
-    if (connectingEl) connectingEl.style.display = "none";
-    if (cutBtn) cutBtn.style.display = "inline-block";
-    if (!obsConnectedShown[cam]) {
-      obsConnectedShown[cam] = true;
-      if (connectedEl) connectedEl.style.display = "inline-flex";
-      if (obsConnectedHideTimers[cam]) clearTimeout(obsConnectedHideTimers[cam]);
-      obsConnectedHideTimers[cam] = setTimeout(function () {
-        obsConnectedHideTimers[cam] = null;
-        const el = dom[cam + "ObsConnected"];
-        if (el) el.style.display = "none";
-      }, 3000);
-    } else {
-      if (connectedEl) connectedEl.style.display = "none";
-    }
 
     if (camStatus.program) {
       state.currentLiveCam = cam;
@@ -2161,8 +2220,11 @@
           }
         }
         if (!connected) switcherWasConnected = false;
+        switcherConnected = connected;
         updateObsBar("cam1", obsStatus);
         updateObsBar("cam2", obsStatus);
+        updateCameraCutUi("cam1");
+        updateCameraCutUi("cam2");
         updateStreamControls(obsStatus);
         const streamPanel = document.getElementById("settingsTabPanelStream");
         if (streamPanel && streamPanel.classList.contains("active")) refreshStreamStatus();
@@ -2478,6 +2540,10 @@
 
   async function obsCut(cam) {
     try {
+      if (!switcherConnected) {
+        showStreamToast("Switcher not connected", "error");
+        return;
+      }
       if (!window.pywebview?.api?.obs_cut) return;
       status(cam, "Cutting to camera...");
       const [ok, resp] = await window.pywebview.api.obs_cut(cam);
@@ -2612,6 +2678,55 @@
     persistUiPrefs({ keyboard_hints_dismissed: true });
   }
 
+
+  function collectFailedStartupSteps(steps) {
+    const ul = document.getElementById("startupSteps");
+    if (!ul) return [];
+    return steps.filter(function (step) {
+      const li = ul.querySelector('[data-step-id="' + step.id + '"]');
+      return li && (li.classList.contains("warn") || li.classList.contains("skipped"));
+    });
+  }
+
+  function settingsTabForFailedSteps(failedSteps) {
+    if (!failedSteps.length) return "stream";
+    const tab = failedSteps[0].settingsTab || STARTUP_STEP_SETTINGS_TAB[failedSteps[0].id];
+    return normalizeSettingsTab(tab || "stream");
+  }
+
+  function showStartupFailurePanel(failedSteps) {
+    const title = document.getElementById("startupTitle");
+    const issues = document.getElementById("startupIssues");
+    const list = document.getElementById("startupIssuesList");
+    const actions = document.getElementById("startupActions");
+    if (title) title.textContent = "Setup incomplete";
+    if (list) {
+      list.innerHTML = "";
+      failedSteps.forEach(function (step) {
+        const li = document.createElement("li");
+        li.textContent = STARTUP_ISSUE_MSG[step.id] || step.label;
+        list.appendChild(li);
+      });
+    }
+    if (issues) issues.style.display = "block";
+    if (actions) actions.style.display = "flex";
+    const continueBtn = document.getElementById("startupContinueBtn");
+    const settingsBtn = document.getElementById("startupSettingsBtn");
+    if (continueBtn) {
+      continueBtn.onclick = function () { dismissStartupSplash(); };
+    }
+    if (settingsBtn) {
+      settingsBtn.onclick = async function () {
+        try {
+          if (appInitPromise) await appInitPromise;
+        } catch (e) {}
+        const tab = settingsTabForFailedSteps(failedSteps);
+        dismissStartupSplash();
+        window.setTimeout(function () { openSettingsToTab(tab); }, 120);
+      };
+    }
+  }
+
   function dismissStartupSplash() {
     const splash = document.getElementById("startupSplash");
     if (!splash || splash.classList.contains("fade-out")) return;
@@ -2648,17 +2763,6 @@
     label.textContent = step.label;
     li.appendChild(icon);
     li.appendChild(label);
-    if ((state === "warn" || state === "skipped") && step.settingsTab) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "startupStepAction";
-      btn.textContent = "Open Settings";
-      btn.onclick = function (ev) {
-        ev.stopPropagation();
-        openSettingsToTab(step.settingsTab);
-      };
-      li.appendChild(btn);
-    }
     return li;
   }
 
@@ -2826,16 +2930,22 @@
       setStartupStepState(step.id, ok ? "done" : "warn");
     }
 
-    const initPromise = init();
+    appInitPromise = init();
     const remaining = deadline - Date.now();
     if (remaining > 0) {
       await Promise.race([
-        initPromise,
+        appInitPromise,
         new Promise(function (r) { window.setTimeout(r, remaining); })
       ]);
     }
-    initPromise.catch(function (e) { console.error("init error:", e); });
-    dismissStartupSplash();
+    appInitPromise.catch(function (e) { console.error("init error:", e); });
+
+    const failedSteps = collectFailedStartupSteps(steps);
+    if (failedSteps.length) {
+      showStartupFailurePanel(failedSteps);
+    } else {
+      dismissStartupSplash();
+    }
   }
 
   const VALID_SETTINGS_TABS = ["stream", "switcher", "general", "midi"];
@@ -3375,12 +3485,14 @@
       const wasOnline = cameraWasOnline[cam];
       cameraWasOnline[cam] = !!ok;
       setDot(cam, ok);
+      updateCameraCutUi(cam);
       if (ok && !wasOnline) {
         await ensureTrackingOff(cam);
       }
     } catch (e) {
       cameraWasOnline[cam] = false;
       setDot(cam, false);
+      updateCameraCutUi(cam);
     }
   }
 
@@ -3442,6 +3554,8 @@
       window.pywebview.api.set_obs_simple_mode(simpleOn).catch(function() {});
     }
     await loadCameraTitles();
+    updateCameraCutUi("cam1");
+    updateCameraCutUi("cam2");
     pollObsStatus();
     setInterval(pollObsStatus, 300);
     loadCameraPreviews();

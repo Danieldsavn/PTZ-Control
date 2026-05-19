@@ -25,7 +25,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='PTZ-CONTROL 3.0',
+    name='PTZ-Control',
     icon=_icon_path,
     debug=False,
     bootloader_ignore_signals=False,

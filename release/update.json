@@ -1,6 +1,6 @@
 {
   "version": "3.0",
-  "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.0/PTZ-CONTROL.3.0.exe",
-  "sha256": "9dccc5a93775e404a8408490aa2ff3379012eef0fdf0ecf02b7d97b27f78ec6c",
-  "release_notes": "PTZ-Control 3.0 — GoStream switcher, dual PTZ cameras, stream keys, MIDI triggers, and in-app auto-update."
+  "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.0/PTZ-Control.exe",
+  "sha256": "891f4aea2bbbdd23678bd775fa3e8f00345304b017a33deba0aeadf99b77a4a5",
+  "release_notes": "PTZ-Control — GoStream switcher, dual PTZ cameras, stream keys, MIDI triggers, and in-app auto-update. Version is tracked in version.json beside the exe."
 }

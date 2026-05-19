@@ -37,8 +37,8 @@ from midi_manager import (
 )
 from update_checker import (
     DEFAULT_MANIFEST_URL,
-    EXE_NAME as UPDATE_EXE_NAME,
     apply_downloaded_update,
+    canonical_exe_path,
     check_for_update,
     download_update,
 )
@@ -1871,7 +1871,7 @@ class Api:
             if not st.get("update_available"):
                 return False, st.get("error") or "No update available"
             exe_dir = _exe_dir()
-            exe_path = os.path.join(exe_dir, UPDATE_EXE_NAME)
+            exe_path = canonical_exe_path(exe_dir)
             download_path = exe_path + ".download"
             dl_url = st.get("download_url") or ""
             sha = st.get("sha256") or ""
@@ -1923,7 +1923,7 @@ def main():
 
     global _app_window
     _app_window = webview.create_window(
-        "Camera Control",
+        "PTZ-Control",
         url=html_path,
         width=width,
         height=height,

@@ -17,10 +17,30 @@ import requests
 DEFAULT_MANIFEST_URL = (
     "https://github.com/Danieldsavn/PTZ-Control/releases/latest/download/update.json"
 )
-EXE_NAME = "PTZ-CONTROL 3.0.exe"
+EXE_NAME = "PTZ-Control.exe"
+LEGACY_EXE_NAME = "PTZ-CONTROL 3.0.exe"
 DOWNLOAD_SUFFIX = ".download"
 BAK_SUFFIX = ".bak"
 REQUEST_TIMEOUT = 30
+
+
+def canonical_exe_path(exe_dir: str) -> str:
+    return os.path.join(exe_dir, EXE_NAME)
+
+
+def running_exe_path(exe_dir: str) -> str:
+    """Path of the exe the user launched (supports legacy filename)."""
+    if getattr(sys, "frozen", False) and sys.executable:
+        p = os.path.abspath(sys.executable)
+        if os.path.normcase(os.path.dirname(p)) == os.path.normcase(os.path.abspath(exe_dir)):
+            return p
+    canonical = canonical_exe_path(exe_dir)
+    if os.path.isfile(canonical):
+        return canonical
+    legacy = os.path.join(exe_dir, LEGACY_EXE_NAME)
+    if os.path.isfile(legacy):
+        return legacy
+    return canonical
 
 
 def parse_version(version: str) -> tuple[int, ...]:
@@ -164,14 +184,20 @@ def write_version_file(version_path: str, version: str) -> None:
         pass
 
 
-def _write_apply_script(script_path: str, exe_dir: str, exe_name: str, parent_pid: int) -> None:
-    exe_path = os.path.join(exe_dir, exe_name)
-    download_path = exe_path + DOWNLOAD_SUFFIX
-    bak_path = exe_path + BAK_SUFFIX
-    # PowerShell: wait for app exit, swap exe, restart, remove script
+def _write_apply_script(
+    script_path: str,
+    exe_dir: str,
+    canonical_exe: str,
+    running_exe: str,
+    parent_pid: int,
+) -> None:
+    download_path = canonical_exe + DOWNLOAD_SUFFIX
+    bak_path = canonical_exe + BAK_SUFFIX
+    # PowerShell: wait for app exit, install canonical exe, remove legacy name, restart
     ps = f"""$ErrorActionPreference = 'Stop'
 $parentPid = {int(parent_pid)}
-$exe = '{exe_path.replace("'", "''")}'
+$canonical = '{canonical_exe.replace("'", "''")}'
+$running = '{running_exe.replace("'", "''")}'
 $download = '{download_path.replace("'", "''")}'
 $bak = '{bak_path.replace("'", "''")}'
 try {{
@@ -179,9 +205,12 @@ try {{
 }} catch {{}}
 Start-Sleep -Seconds 1
 if (Test-Path $download) {{
-  if (Test-Path $exe) {{ Move-Item -LiteralPath $exe -Destination $bak -Force }}
-  Move-Item -LiteralPath $download -Destination $exe -Force
-  Start-Process -FilePath $exe -WorkingDirectory '{exe_dir.replace("'", "''")}'
+  if (Test-Path $canonical) {{ Move-Item -LiteralPath $canonical -Destination $bak -Force }}
+  Move-Item -LiteralPath $download -Destination $canonical -Force
+  if ($running -ne $canonical -and (Test-Path $running)) {{
+    Remove-Item -LiteralPath $running -Force -ErrorAction SilentlyContinue
+  }}
+  Start-Process -FilePath $canonical -WorkingDirectory '{exe_dir.replace("'", "''")}'
 }}
 Remove-Item -LiteralPath '{script_path.replace("'", "''")}' -Force -ErrorAction SilentlyContinue
 """
@@ -195,8 +224,9 @@ def apply_downloaded_update(
     version_file: str,
     parent_pid: int | None = None,
 ) -> tuple[bool, str]:
-    exe_path = os.path.join(exe_dir, EXE_NAME)
-    download_path = exe_path + DOWNLOAD_SUFFIX
+    canonical = canonical_exe_path(exe_dir)
+    running = running_exe_path(exe_dir)
+    download_path = canonical + DOWNLOAD_SUFFIX
     if not os.path.isfile(download_path):
         return False, "Downloaded update not found"
     if os.path.getsize(download_path) < 1024 * 1024:
@@ -204,7 +234,7 @@ def apply_downloaded_update(
     script_path = os.path.join(exe_dir, "apply_update.ps1")
     pid = parent_pid if parent_pid is not None else os.getpid()
     try:
-        _write_apply_script(script_path, exe_dir, EXE_NAME, pid)
+        _write_apply_script(script_path, exe_dir, canonical, running, pid)
         write_version_file(version_file, new_version)
         flags = 0
         if sys.platform == "win32":

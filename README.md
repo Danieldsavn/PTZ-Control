@@ -15,7 +15,7 @@ py -3.12 -m PyInstaller PTZ-Control.spec --noconfirm
 copy version.json dist\
 ```
 
-Output: `dist\PTZ-CONTROL 3.0.exe`
+Output: `dist\PTZ-Control.exe` (version is read from `version.json` beside the exe)
 
 ## Updates
 
