@@ -92,7 +92,19 @@ def _launch_app(canonical: str, work_dir: str, log_dir: str) -> None:
         )
     time.sleep(2)
     if not _process_running(PROC_NAME):
-        _log(exe_dir, "App process not detected after launch (may still be starting)")
+        _log(log_dir, "App process not detected after launch (may still be starting)")
+
+
+def run_restart(install_dir: str) -> int:
+    """Wait for main app to exit, then relaunch (no UI). Used by Restart app button."""
+    install_dir = os.path.abspath(install_dir)
+    work_dir = get_update_work_dir()
+    canonical = canonical_exe_path(install_dir)
+    _log(work_dir, f"Restart helper started (install={install_dir})")
+    _wait_for_exit(PROC_NAME, work_dir, WAIT_PROCESS_SEC)
+    _launch_app(canonical, install_dir, work_dir)
+    _log(work_dir, "Restart finished")
+    return 0
 
 
 def run_update(job_path: str, ui: "UpdaterUI") -> None:
@@ -221,8 +233,18 @@ class UpdaterUI:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--job", required=True, help="Path to update_job.json")
+    parser.add_argument("--job", help="Path to update_job.json")
+    parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="Wait for PTZ-Control to exit and relaunch (no window)",
+    )
     args = parser.parse_args()
+    if args.restart:
+        install_dir = os.path.abspath(os.getcwd())
+        return run_restart(install_dir)
+    if not args.job:
+        parser.error("--job or --restart is required")
     job_path = os.path.abspath(args.job)
     if not os.path.isfile(job_path):
         print(f"Job file not found: {job_path}", file=sys.stderr)

@@ -49,6 +49,89 @@ def staging_download_path() -> str:
     return os.path.join(get_update_work_dir(), STAGING_EXE_NAME)
 
 
+RESTART_HELPER_NAME = "restart_ptz.cmd"
+
+
+def frozen_exe_path() -> str:
+    """Installed .exe path when frozen (not the PyInstaller _MEI extract folder)."""
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        import ctypes
+
+        buf = ctypes.create_unicode_buffer(32768)
+        n = ctypes.windll.kernel32.GetModuleFileNameW(None, buf, len(buf))
+        if n:
+            return os.path.abspath(buf.value)
+    if getattr(sys, "frozen", False):
+        return os.path.abspath(sys.executable)
+    return os.path.abspath(sys.argv[0])
+
+
+def _launch_restart_helper_cmd(exe_path: str, work_dir: str) -> bool:
+    """Fallback: detached cmd waits for PTZ-Control.exe to exit, then relaunches."""
+    if sys.platform != "win32":
+        subprocess.Popen([exe_path], cwd=work_dir, close_fds=True)
+        return True
+
+    work = get_update_work_dir()
+    helper = os.path.join(work, RESTART_HELPER_NAME)
+    script = (
+        "@echo off\r\n"
+        "setlocal EnableExtensions\r\n"
+        ":wait\r\n"
+        'tasklist /FI "IMAGENAME eq PTZ-Control.exe" /NH 2>nul | find /I "PTZ-Control.exe" >nul\r\n'
+        "if %errorlevel%==0 (\r\n"
+        "  timeout /t 1 /nobreak >nul\r\n"
+        "  goto wait\r\n"
+        ")\r\n"
+        "timeout /t 2 /nobreak >nul\r\n"
+        f'cd /d "{work_dir}"\r\n'
+        "set _MEIPASS=\r\n"
+        "set PYINSTALLER_RESET_ENVIRONMENT=1\r\n"
+        f'start "" "{exe_path}"\r\n'
+        "del /f /q \"%~f0\" >nul 2>&1\r\n"
+    )
+    with open(helper, "w", encoding="utf-8", newline="") as f:
+        f.write(script)
+
+    import ctypes
+
+    # ShellExecute detaches from our process tree (Popen children die with os._exit).
+    rc = ctypes.windll.shell32.ShellExecuteW(
+        None, "open", "cmd.exe", f'/c "{helper}"', work, 0
+    )
+    return rc > 32
+
+
+def launch_restart(exe_path: str | None = None) -> bool:
+    """
+    Relaunch after this process exits (PyInstaller one-file safe).
+    Prefer PTZ-Control-Updater.exe --restart (same helper used for updates).
+    """
+    exe_path = os.path.abspath(exe_path or frozen_exe_path())
+    work_dir = os.path.dirname(exe_path)
+    if sys.platform != "win32":
+        subprocess.Popen([exe_path], cwd=work_dir, close_fds=True)
+        return True
+
+    updater = updater_exe_path(work_dir)
+    if os.path.isfile(updater):
+        import ctypes
+
+        work = get_update_work_dir()
+        try:
+            with open(apply_log_path(), "a", encoding="utf-8") as f:
+                f.write(f"[restart] spawning updater for {exe_path}\n")
+        except Exception:
+            pass
+        rc = ctypes.windll.shell32.ShellExecuteW(
+            None, "open", updater, "--restart", work_dir, 0
+        )
+        if rc > 32:
+            return True
+
+    return _launch_restart_helper_cmd(exe_path, work_dir)
+
+
 def launch_windows_exe(
     exe_path: str, work_dir: str, delay_seconds: int = 0
 ) -> bool:

@@ -1,6 +1,6 @@
-{
-  "version": "3.8",
-  "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.8/PTZ-Control.exe",
-  "sha256": "571ab2e8297b7bf2fc1dd83f76e1309bf697f70b058cf3051c1873f64f3b5639",
-  "release_notes": "Fix Restart app crash (_cffi_backend / pythonnet): bundle cffi for PyInstaller, force Edge WebView2 GUI, delay relaunch, skip winforms backend."
+﻿{
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.16/PTZ-Control.exe",
+    "sha256":  "40e565fde15e21bbcfcdd085ae7fe974c7e7311b1f38695e6b70f0a656e5fb67",
+    "version":  "3.16",
+    "release_notes":  "God Bless Screen MIDI, Test stream (Stream 2), MIDI learn fixes, manual update check, single-instance guard, restart via updater."
 }

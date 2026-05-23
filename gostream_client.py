@@ -94,6 +94,7 @@ ALLOWED_GET_CMDS = frozenset({
 
 SOURCE_MULTI = 5001
 STREAM_1_ID = 0
+STREAM_2_ID = 1
 USK_1_KEY_ID = 0
 USK_KEY_TYPE_LUMA = 0
 DSK_1_KEY_ID = 0
@@ -158,6 +159,7 @@ class GoStreamClient:
         self._pvw_src: Optional[int] = None
         self._stream_live_on = False
         self._stream1_output_live = False
+        self._stream2_output_live = False
         self._usk1_on = False
         self._usk1_key_type: Optional[int | str] = None
         self._usk1_luma_fill: Optional[int] = None
@@ -220,6 +222,10 @@ class GoStreamClient:
     @property
     def stream1_rtmp_key(self) -> str:
         return self._stream1_rtmp_key
+
+    @property
+    def stream2_output_live(self) -> bool:
+        return self._stream2_output_live
 
     @property
     def multisource_enabled(self) -> bool:
@@ -514,6 +520,7 @@ class GoStreamClient:
         self.send_get(CMD_PVW_INDEX)
         self.send_get(CMD_LIVE)
         self.send_get(CMD_LIVE_STREAM_OUTPUT_STATUS, [STREAM_1_ID])
+        self.send_get(CMD_LIVE_STREAM_OUTPUT_STATUS, [STREAM_2_ID])
         self.request_stream_ui_state()
         self.request_usk1_luma_state()
         self.send_get(CMD_LIVE_STREAM_OUTPUT_KEY)
@@ -548,6 +555,8 @@ class GoStreamClient:
                 # Companion LiveStatus: 0=Off, 1=On, 2=Abnormal
                 if stream_id == STREAM_1_ID:
                     self._stream1_output_live = int(val[1]) == 1
+                elif stream_id == STREAM_2_ID:
+                    self._stream2_output_live = int(val[1]) == 1
             except (TypeError, ValueError):
                 pass
         elif cmd_id == CMD_KEY_ON_AIR and len(val) >= 2:

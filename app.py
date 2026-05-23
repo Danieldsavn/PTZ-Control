@@ -7,6 +7,47 @@ if sys.platform == "win32":
     os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
     os.environ.setdefault("PYWEBVIEW_GUI", "edgechromium")
 
+_SINGLE_INSTANCE_MUTEX = None
+
+
+def _acquire_single_instance() -> bool:
+    """Only one PTZ-Control process at a time. Returns False if another is already running."""
+    global _SINGLE_INSTANCE_MUTEX
+    if sys.platform == "win32":
+        import ctypes
+
+        ERROR_ALREADY_EXISTS = 183
+        # Released automatically when this process exits (restart/update safe).
+        name = "Local\\PTZ-Control-SingleInstance"
+        handle = ctypes.windll.kernel32.CreateMutexW(None, True, name)
+        if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                "PTZ-Control is already running.\n\n"
+                "Only one copy can be open at a time. Close the other window first, "
+                "or use Restart in settings if you need to reload the app.",
+                "PTZ-Control",
+                0x30,
+            )
+            return False
+        _SINGLE_INSTANCE_MUTEX = handle
+        return True
+
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", 47823))
+        sock.listen(1)
+    except OSError:
+        print("PTZ-Control is already running.", file=sys.stderr)
+        return False
+    _SINGLE_INSTANCE_MUTEX = sock
+    return True
+
+
 import json
 import socket
 import threading
@@ -21,9 +62,11 @@ from gostream_client import (
     SOURCE_IN3,
     SOURCE_IN4,
     STREAM_1_ID,
+    STREAM_2_ID,
     USK_1_KEY_ID,
     DSK_1_KEY_ID,
     DSK_FILL_STILL_1,
+    SOURCE_MP,
     SOURCE_MULTI,
     MULTISOURCE_WINDOW_1_ID,
     MULTISOURCE_WINDOW_2_ID,
@@ -47,7 +90,8 @@ from update_checker import (
     check_for_update,
     get_update_work_dir,
     launch_gui_updater,
-    launch_windows_exe,
+    launch_restart,
+    running_exe_path,
     write_update_job,
 )
 
@@ -646,6 +690,8 @@ SWITCHER_RECONNECT_MAX_S = 5.0
 SWITCHER_POLL_FAIL_DISCONNECT = 3
 # Re-check upstream key 1 (Luma, HDMI 3 fill, HDMI 4 key) on this interval
 USK_VERIFY_INTERVAL_S = 8.0
+GOD_BLESS_STILL_INDEX = 5
+TITLE_STILL_INDEX = 1
 
 # ---------------- GoStream physical switcher manager ----------------
 class SwitcherManager:
@@ -668,6 +714,7 @@ class SwitcherManager:
             "usk1On": False,
             "dsk1On": False,
             "stream1Key": "",
+            "stream2Live": False,
             "splitviewOn": False,
             "mp1StillIndex": None,
         }
@@ -679,6 +726,8 @@ class SwitcherManager:
         self._poll_failures = 0
         self._last_live_cam = "cam1"
         self._last_usk_verify = 0.0
+        self._god_bless_active = False
+        self._god_bless_return_still_index: int | None = None
         self._ensure_polling()
         self._try_connect()
 
@@ -753,6 +802,7 @@ class SwitcherManager:
                 "usk1On": self._client.usk1_on,
                 "dsk1On": self._client.dsk1_on,
                 "stream1Key": self._client.stream1_rtmp_key or self._config.get("stream1_key", ""),
+                "stream2Live": self._client.stream2_output_live,
                 "splitviewOn": self._client.pgm_src == SOURCE_MULTI,
                 "mp1StillIndex": self._client.mp1_still_index,
             })
@@ -901,6 +951,9 @@ class SwitcherManager:
                 self._client.send_get(
                     "liveStreamOutputStatus", [STREAM_1_ID]
                 )
+                self._client.send_get(
+                    "liveStreamOutputStatus", [STREAM_2_ID]
+                )
                 self._client.request_stream_ui_state()
                 if (
                     self._client.pgm_src == SOURCE_MULTI
@@ -950,6 +1003,79 @@ class SwitcherManager:
         self._reconnect_backoff = SWITCHER_RECONNECT_MIN_S
         return self._try_connect()
 
+    def _current_mp1_still_index(self) -> int:
+        idx = self._client.mp1_still_index
+        if idx is not None and 1 <= int(idx) <= 127:
+            return int(idx)
+        with self._lock:
+            cached = self._status_cache.get("mp1StillIndex")
+        if cached is not None and 1 <= int(cached) <= 127:
+            return int(cached)
+        return TITLE_STILL_INDEX
+
+    def _apply_mp1_still(self, still_index: int) -> bool:
+        return self._client.activate_still(int(still_index))
+
+    def _restore_from_god_bless(self, adopt_still: int | None = None) -> bool:
+        """Leave God Bless on program: restore MP1 still and fade back to camera."""
+        if not self._god_bless_active:
+            return True
+        restore_idx = int(
+            adopt_still
+            if adopt_still is not None
+            else (self._god_bless_return_still_index or TITLE_STILL_INDEX)
+        )
+        self._god_bless_active = False
+        self._god_bless_return_still_index = restore_idx
+        if not self._apply_mp1_still(restore_idx):
+            return False
+        time.sleep(0.08)
+        target = self._background_camera_sdi()
+        if not self._client.fade_to_source(target):
+            return False
+        time.sleep(0.12)
+        self._client.send_get("pgmIndex")
+        self._client.send_get("pvwIndex")
+        self._client.request_stream_ui_state()
+        self._refresh_status_cache()
+        return True
+
+    def exit_god_bless_if_active(self, adopt_still: int | None = None) -> None:
+        if self._god_bless_active:
+            try:
+                self._restore_from_god_bless(adopt_still=adopt_still)
+            except Exception:
+                self._god_bless_active = False
+
+    def god_bless_screen(self) -> tuple[bool, str]:
+        if not self._ensure_connected():
+            return False, "Switcher not connected (reconnecting…)"
+        try:
+            if self._god_bless_active:
+                if not self._restore_from_god_bless():
+                    return False, "Failed to leave God Bless Screen"
+                return True, "God Bless Screen off"
+            saved = self._current_mp1_still_index()
+            self._god_bless_return_still_index = saved
+            self._god_bless_active = True
+            if not self._apply_mp1_still(GOD_BLESS_STILL_INDEX):
+                self._god_bless_active = False
+                return False, "Failed to select God Bless still on media player 1"
+            time.sleep(0.08)
+            if not self._client.fade_to_source(SOURCE_MP):
+                self._god_bless_active = False
+                self._apply_mp1_still(saved)
+                return False, "Failed to fade to God Bless Screen"
+            time.sleep(0.15)
+            self._client.send_get("pgmIndex")
+            self._client.send_get("pvwIndex")
+            self._client.request_stream_ui_state()
+            self._refresh_status_cache()
+            return True, "God Bless Screen on"
+        except Exception as e:
+            self._god_bless_active = False
+            return False, f"God Bless Screen error: {e}"
+
     def stream_go_live(self):
         if not self._ensure_connected():
             return False, "Switcher not connected (reconnecting…)"
@@ -980,10 +1106,43 @@ class SwitcherManager:
         except Exception as e:
             return False, f"Stop error: {e}"
 
+    def test_stream_start(self):
+        """Start Stream 2 output (persistent RTMP key configured on switcher)."""
+        if not self._ensure_connected():
+            return False, "Switcher not connected (reconnecting…)"
+        try:
+            if not self._client.set_stream_output_enable(STREAM_2_ID, True):
+                return False, "Failed to start test stream (Stream 2)"
+            time.sleep(0.2)
+            self._client.send_get("liveStreamOutputStatus", [STREAM_2_ID])
+            time.sleep(0.08)
+            self._refresh_status_cache()
+            return True, "Test stream started (Stream 2)"
+        except Exception as e:
+            return False, f"Test stream start error: {e}"
+
+    def test_stream_stop(self):
+        """Stop Stream 2 output only (does not affect Stream 1 / main Go Live)."""
+        if not self._ensure_connected():
+            return False, "Switcher not connected (reconnecting…)"
+        try:
+            if not self._client.set_stream_output_enable(STREAM_2_ID, False):
+                return False, "Failed to stop test stream (Stream 2)"
+            time.sleep(0.2)
+            self._client.send_get("liveStreamOutputStatus", [STREAM_2_ID])
+            time.sleep(0.08)
+            self._refresh_status_cache()
+            return True, "Test stream stopped (Stream 2)"
+        except Exception as e:
+            return False, f"Test stream stop error: {e}"
+
     def usk1_set(self, on: bool):
         if not self._ensure_connected():
             return False, "Switcher not connected (reconnecting…)"
         try:
+            if self._god_bless_active:
+                self.exit_god_bless_if_active()
+                time.sleep(0.12)
             use_fade = bool(self._config.get("keys_use_mix_fade", True))
             rate = float(self._config.get("key_mix_rate_seconds", 2.0))
             if use_fade:
@@ -1005,6 +1164,11 @@ class SwitcherManager:
         if not self._ensure_connected():
             return False, "Switcher not connected (reconnecting…)"
         try:
+            if self._god_bless_active:
+                adopt = TITLE_STILL_INDEX if on else None
+                if not self._restore_from_god_bless(adopt_still=adopt):
+                    return False, "Failed to leave God Bless Screen"
+                time.sleep(0.12)
             use_fade = bool(self._config.get("keys_use_mix_fade", True))
             rate = float(self._config.get("key_mix_rate_seconds", 2.0))
             if use_fade:
@@ -1026,8 +1190,16 @@ class SwitcherManager:
         if not self._ensure_connected():
             return False, "Switcher not connected (reconnecting…)"
         try:
-            if not self._client.activate_still(still_index):
+            still_index = int(still_index)
+            if self._god_bless_active:
+                if not self._restore_from_god_bless(adopt_still=still_index):
+                    return False, "Failed to leave God Bless Screen"
+                return True, f"Still {still_index} activated"
+            if not self._apply_mp1_still(still_index):
                 return False, f"Failed to activate still {still_index}"
+            time.sleep(0.06)
+            self._client.request_stream_ui_state()
+            self._refresh_status_cache()
             return True, f"Still {still_index} activated"
         except Exception as e:
             return False, f"Still error: {e}"
@@ -1087,6 +1259,7 @@ class SwitcherManager:
         if not self._ensure_connected():
             return False, "Switcher not connected (reconnecting…)"
         try:
+            self.exit_god_bless_if_active()
             window2 = self._sdi_for_cam(self._last_live_cam or "cam1")
             if not self._client.splitview_on(window2):
                 return False, "Failed to fade to Multisource"
@@ -1116,6 +1289,7 @@ class SwitcherManager:
         if not self._ensure_connected():
             return False, "Switcher not connected (reconnecting…)"
         try:
+            self.exit_god_bless_if_active()
             target = self._background_camera_sdi()
             if not self._client.splitview_off(target):
                 return False, "Failed to fade back to camera"
@@ -1133,6 +1307,7 @@ class SwitcherManager:
 
         source_id = self._sdi_for_cam(cam_key)
         try:
+            self.exit_god_bless_if_active()
             self._last_live_cam = cam_key
             ok_layout, _ = self.configure_multisource_layout(cam_key)
             if not ok_layout:
@@ -1177,16 +1352,18 @@ _midi_manager = None
 
 
 def _save_midi_config_section(midi_cfg: dict) -> None:
+    """Persist MIDI mappings only — MidiManager already holds the in-memory state."""
     data = _load_switcher_config()
     data["midi"] = normalize_midi_config(midi_cfg)
     _save_switcher_config(data)
-    mgr = _midi_manager
-    if mgr:
-        mgr.reload_config()
 
 
 def _midi_trigger_scene(scene_id: str) -> None:
     sm = _get_switcher_manager()
+    if scene_id == "god_bless_screen":
+        sm.god_bless_screen()
+        return
+    sm.exit_god_bless_if_active()
     if scene_id == "full_screen_camera":
         sm.usk1_set(False)
         sm.splitview_off()
@@ -1663,6 +1840,18 @@ class Api:
         except Exception as e:
             return False, f"switcher_stream_stop error: {e}"
 
+    def switcher_test_stream_start(self):
+        try:
+            return _get_switcher_manager().test_stream_start()
+        except Exception as e:
+            return False, f"switcher_test_stream_start error: {e}"
+
+    def switcher_test_stream_stop(self):
+        try:
+            return _get_switcher_manager().test_stream_stop()
+        except Exception as e:
+            return False, f"switcher_test_stream_stop error: {e}"
+
     def switcher_usk1_on(self):
         try:
             return _get_switcher_manager().usk1_set(True)
@@ -1819,15 +2008,14 @@ class Api:
     def restart_app(self):
         """Relaunch PTZ-Control (used when switcher was off at startup)."""
         try:
-            exe = os.path.abspath(sys.executable)
-            work_dir = os.path.dirname(exe)
             if getattr(sys, "frozen", False):
-                if not launch_windows_exe(exe, work_dir, delay_seconds=3):
+                exe = running_exe_path(_exe_dir())
+                if not launch_restart(exe):
                     return False, "Could not restart PTZ-Control."
             else:
                 subprocess.Popen(
                     [sys.executable, os.path.abspath(__file__)],
-                    cwd=work_dir,
+                    cwd=_exe_dir(),
                     close_fds=True,
                 )
             global _app_window
@@ -1884,10 +2072,10 @@ class Api:
             return False, f"midi_clear_note error: {e}"
 
   # --------- App update ---------
-    def check_for_update(self):
+    def check_for_update(self, force=False):
         try:
             cfg = _load_switcher_config()
-            enabled = bool(cfg.get("update_check_enabled", True))
+            enabled = True if force else bool(cfg.get("update_check_enabled", True))
             url = (cfg.get("update_manifest_url") or DEFAULT_MANIFEST_URL).strip()
             st = check_for_update(_load_version(), url, enabled=enabled)
             return True, st
@@ -1898,9 +2086,7 @@ class Api:
         try:
             cfg = _load_switcher_config()
             url = (cfg.get("update_manifest_url") or DEFAULT_MANIFEST_URL).strip()
-            st = check_for_update(
-                _load_version(), url, enabled=bool(cfg.get("update_check_enabled", True))
-            )
+            st = check_for_update(_load_version(), url, enabled=True)
             if not st.get("update_available"):
                 return False, st.get("error") or "No update available"
             exe_dir = _exe_dir()
@@ -1932,6 +2118,9 @@ class Api:
 
 
 def main():
+    if not _acquire_single_instance():
+        sys.exit(0)
+
     ui_base = _ui_base_dir()
     html_path = os.path.join(ui_base, "ui", "ptz-top-half.html")
 

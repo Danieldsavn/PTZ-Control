@@ -762,6 +762,9 @@
       align-items: center;
       margin-bottom: 10px;
     }
+    .manualUpdateCheckRow {
+      align-items: flex-start;
+    }
     .obsSettingsRow label {
       font-size: 12px;
       color: #64748b;
@@ -828,6 +831,38 @@
     .streamStatusPanel .liveYes { color: #16a34a; font-weight: 600; }
     .streamStatusPanel .liveNo { color: #64748b; }
     .streamStatusPanel .warnLine { color: #b45309; }
+    .testStreamSection {
+      margin: 16px 0;
+      padding: 12px 14px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+    }
+    .testStreamSection h3 {
+      margin: 0 0 8px 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: #1e293b;
+    }
+    .testStreamStatus {
+      margin: 0 0 10px 0;
+      font-size: 12px;
+      color: #64748b;
+    }
+    .testStreamStatus.liveYes { color: #16a34a; font-weight: 600; }
+    .testStreamStatus.liveNo { color: #64748b; }
+    .testStreamStatus.warnLine { color: #b45309; }
+    .testStreamActions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .testStreamActions button.stopTestStream.on {
+      background: #dc2626;
+      border-color: #b91c1c;
+      color: #fff;
+    }
 
 
     .startupSplash {
@@ -1573,6 +1608,15 @@
           <label>Stream Key 1</label>
           <input type="text" id="stream1KeyInput" placeholder="Paste stream key from Restream.IO" autocomplete="off" />
         </div>
+        <div class="testStreamSection">
+          <h3>Test stream (Stream 2)</h3>
+          <p class="small" style="margin:0 0 8px 0; color:#64748b;">Uses the switcher&apos;s saved <b>Stream 2</b> RTMP destination (no key entry here). Start and stop only affect Stream 2 — not main Go Live.</p>
+          <p id="testStream2Status" class="testStreamStatus liveNo">Stream 2: —</p>
+          <div class="testStreamActions">
+            <button type="button" class="primary" id="testStream2StartBtn" onclick="testStream2Start()">Start</button>
+            <button type="button" class="ghost stopTestStream" id="testStream2StopBtn" onclick="testStream2Stop()" disabled>Stop</button>
+          </div>
+        </div>
         <div class="obsSettingsActions">
           <button class="primary" onclick="saveStreamSettings()">Save to Switcher</button>
           <button class="ghost" onclick="loadStreamSettings()">Reload</button>
@@ -1606,8 +1650,9 @@
       </div>
 
       <div id="settingsTabPanelMidi" class="settingsTabPanel">
-        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Receive-only MIDI — assign a note to each scene. Press <b>Learn</b>, then play a note within <b>15 seconds</b>. Press <b>Learn</b> again (or choose another row) to cancel.</p>
+        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Receive-only MIDI — assign a note to each scene. Press <b>Learn</b>, then play a note within <b>15 seconds</b>. Click <b>Learn</b> on another row to switch, or <b>Cancel learning</b> to stop.</p>
         <p id="midiStatusLine" class="small">Loading MIDI…</p>
+        <button type="button" class="ghost" id="midiCancelLearnBtn" style="display:none; margin:0 0 12px 0;" onclick="midiCancelLearn()">Cancel learning</button>
         <div class="obsSettingsRow">
           <label>MIDI input device</label>
           <select id="midiDeviceSelect" style="flex:1; max-width:420px; padding:8px; border-radius:6px; border:1px solid #cbd5e1;"></select>
@@ -1634,6 +1679,15 @@
           <label>Check for updates on startup</label>
           <div class="toggleWrap">
             <div class="toggleSwitch" id="showUpdateCheckToggle" role="button" tabindex="0" aria-pressed="true" title="Check for updates" onclick="onShowUpdateCheckToggleClick()" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); onShowUpdateCheckToggleClick(); }"></div>
+          </div>
+        </div>
+        <div class="obsSettingsRow manualUpdateCheckRow">
+          <label>Check for updates</label>
+          <div style="display:flex; flex-direction:column; gap:8px; flex:1; min-width:0;">
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+              <button type="button" class="ghost" id="manualUpdateCheckBtn" onclick="manualCheckForUpdate()">Check now</button>
+            </div>
+            <p id="manualUpdateCheckStatus" class="small" style="margin:0; color:#64748b;">Check the update server for a newer version.</p>
           </div>
         </div>
         <div class="obsSettingsRow" style="align-items: center;">
@@ -2714,6 +2768,55 @@
     }
   }
 
+  let manualUpdateCheckInFlight = false;
+
+  async function manualCheckForUpdate() {
+    if (manualUpdateCheckInFlight) return;
+    const api = window.pywebview?.api;
+    const btn = document.getElementById("manualUpdateCheckBtn");
+    const status = document.getElementById("manualUpdateCheckStatus");
+    if (!api?.check_for_update) {
+      if (status) status.textContent = "Update check is not available.";
+      return;
+    }
+    manualUpdateCheckInFlight = true;
+    if (btn) { btn.disabled = true; btn.textContent = "Checking\u2026"; }
+    if (status) status.textContent = "Checking for updates\u2026";
+    try {
+      const [ok, st] = await api.check_for_update(true);
+      if (!ok) {
+        const err = typeof st === "string" ? st : "Unknown error";
+        if (status) status.textContent = "Check failed: " + err;
+        showStreamToast("Update check failed", "error");
+        return;
+      }
+      if (st && st.error) {
+        if (status) status.textContent = "Could not reach update server: " + st.error;
+        return;
+      }
+      if (st && st.update_available) {
+        if (status) {
+          status.textContent = "Update available: v" + st.current + " \u2192 v" + st.latest;
+        }
+        openUpdateConfirm(st);
+        return;
+      }
+      const cur = (st && st.current) ? st.current : "?";
+      const lat = (st && st.latest) ? st.latest : cur;
+      if (status) {
+        status.textContent = lat === cur
+          ? "You\u2019re up to date (v" + cur + ")."
+          : "You\u2019re up to date (v" + cur + "). Latest release is v" + lat + ".";
+      }
+    } catch (e) {
+      if (status) status.textContent = "Check failed: " + e;
+      showStreamToast("Update check error: " + e, "error");
+    } finally {
+      manualUpdateCheckInFlight = false;
+      if (btn) { btn.disabled = false; btn.textContent = "Check now"; }
+    }
+  }
+
   async function maybeCheckForUpdate() {
     if (updatePromptDismissedThisSession) return;
     const api = window.pywebview?.api;
@@ -3125,7 +3228,64 @@
       ? "<b>Stream key:</b> Saved on switcher"
       : '<b>Stream key:</b> <span class="warnLine">Not set</span> — add key below and click Save';
     const lyr = (st.usk1On ? "Lyrics on" : "Lyrics off") + " · " + (st.dsk1On ? "Title on" : "Title off");
-    return conn + "<br>" + live + "<br>" + keyLine + '<br><span style="color:#94a3b8">' + escHtml(lyr) + "</span>";
+    const stream2 = st.stream2Live
+      ? '<b>Stream 2 (test):</b> <span class="liveYes">Live</span>'
+      : '<b>Stream 2 (test):</b> <span class="liveNo">Not live</span>';
+    return conn + "<br>" + live + "<br>" + stream2 + "<br>" + keyLine + '<br><span style="color:#94a3b8">' + escHtml(lyr) + "</span>";
+  }
+
+  function updateTestStream2Ui(st) {
+    const statusEl = document.getElementById("testStream2Status");
+    const startBtn = document.getElementById("testStream2StartBtn");
+    const stopBtn = document.getElementById("testStream2StopBtn");
+    if (!statusEl) return;
+    if (!st || !st.connected) {
+      statusEl.textContent = "Stream 2: unavailable — switcher not connected";
+      statusEl.className = "testStreamStatus warnLine";
+      if (startBtn) { startBtn.disabled = true; startBtn.setAttribute("aria-disabled", "true"); }
+      if (stopBtn) { stopBtn.disabled = true; stopBtn.classList.remove("on"); stopBtn.setAttribute("aria-disabled", "true"); }
+      return;
+    }
+    const live = !!st.stream2Live;
+    statusEl.textContent = live ? "Stream 2: Live" : "Stream 2: Off";
+    statusEl.className = "testStreamStatus " + (live ? "liveYes" : "liveNo");
+    if (startBtn) {
+      startBtn.disabled = live;
+      startBtn.setAttribute("aria-disabled", live ? "true" : "false");
+    }
+    if (stopBtn) {
+      stopBtn.disabled = !live;
+      stopBtn.classList.toggle("on", live);
+      stopBtn.setAttribute("aria-disabled", !live ? "true" : "false");
+    }
+  }
+
+  async function testStream2Start() {
+    try {
+      if (!requireSwitcherConnected()) return;
+      const api = window.pywebview?.api;
+      if (!api?.switcher_test_stream_start) return;
+      const [ok, resp] = await api.switcher_test_stream_start();
+      showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) setTimeout(pollObsStatus, 400);
+      else refreshStreamStatus();
+    } catch (e) {
+      showStreamToast("Test stream start error: " + e, "error");
+    }
+  }
+
+  async function testStream2Stop() {
+    try {
+      if (!requireSwitcherConnected()) return;
+      const api = window.pywebview?.api;
+      if (!api?.switcher_test_stream_stop) return;
+      const [ok, resp] = await api.switcher_test_stream_stop();
+      showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
+      if (ok) setTimeout(pollObsStatus, 400);
+      else refreshStreamStatus();
+    } catch (e) {
+      showStreamToast("Test stream stop error: " + e, "error");
+    }
   }
 
   async function refreshStreamStatus() {
@@ -3143,6 +3303,7 @@
         return;
       }
       updateStreamBarStatus(st);
+      updateTestStream2Ui(st);
       el.innerHTML = buildStreamStatusHtml(st);
     } catch (e) {
       el.textContent = "Could not load stream status: " + e;
@@ -3245,21 +3406,35 @@
         tr.appendChild(tdBtn);
         tbody.appendChild(tr);
       });
+      updateMidiCancelBtn(cfg);
       if (cfg.learning) {
         startMidiLearnPoll();
       } else {
         stopMidiLearnPoll();
-        if (cfg.last_learned) {
-          const ll = cfg.last_learned;
-          const cell = document.getElementById("midiNote_" + ll.scene);
-          if (cell && ll.note != null) {
-            setTimeout(function () { refreshMidiUi(false); }, 100);
-          }
-        }
       }
     } catch (e) {
       if (statusEl) statusEl.textContent = "MIDI error: " + e;
     }
+  }
+
+  function midiLearnSecondsLeft(cfg) {
+    if (!cfg || !cfg.learning || !cfg.learn_expires_at) return null;
+    return Math.max(0, Math.ceil(cfg.learn_expires_at - Date.now() / 1000));
+  }
+
+  function updateMidiCancelBtn(cfg) {
+    const cancelBtn = document.getElementById("midiCancelLearnBtn");
+    if (!cancelBtn) return;
+    const show = !!(cfg && cfg.learning);
+    cancelBtn.style.display = show ? "inline-block" : "none";
+  }
+
+  async function midiCancelLearn() {
+    const api = window.pywebview?.api;
+    if (!api?.midi_cancel_learn) return;
+    await api.midi_cancel_learn();
+    stopMidiLearnPoll();
+    await refreshMidiUi(false);
   }
 
   async function refreshMidiUi(reloadDevices) {
@@ -3277,25 +3452,34 @@
       if (tr) {
         const btn = tr.querySelector(".midiLearnBtn");
         if (btn) {
-          btn.classList.toggle("learning", cfg.learning === scene.id);
-          btn.textContent = cfg.learning === scene.id ? "Learning…" : "Learn";
+          const isLearning = cfg.learning === scene.id;
+          btn.classList.toggle("learning", isLearning);
+          btn.textContent = isLearning ? "Learning…" : "Learn";
         }
       }
     });
     const statusEl = document.getElementById("midiStatusLine");
     if (statusEl) {
       if (cfg.learning) {
-        statusEl.textContent = "Learning… play a MIDI note within 15 seconds";
+        const left = midiLearnSecondsLeft(cfg);
+        statusEl.textContent = left != null
+          ? "Learning… play a MIDI note (" + left + "s left)"
+          : "Learning… play a MIDI note within 15 seconds";
         statusEl.classList.remove("warn");
       } else if (cfg.learn_message) {
         statusEl.textContent = cfg.learn_message;
-        statusEl.classList.add("warn");
+        statusEl.classList.toggle("warn", !cfg.learn_message.startsWith("Mapped "));
       } else if (cfg.device && cfg.listening) {
         statusEl.textContent = "Listening on: " + cfg.device;
         statusEl.classList.remove("warn");
       }
     }
-    if (!cfg.learning) stopMidiLearnPoll();
+    updateMidiCancelBtn(cfg);
+    if (cfg.learning) {
+      startMidiLearnPoll();
+    } else {
+      stopMidiLearnPoll();
+    }
   }
 
   async function saveMidiDevice(fromHeader) {
@@ -3333,25 +3517,18 @@
         statusEl.textContent = "Error: " + resp;
         statusEl.classList.add("warn");
       }
+      updateMidiCancelBtn(null);
+      stopMidiLearnPoll();
       return;
     }
-    const [cfgOk, cfg] = await api.midi_get_config();
-    if (statusEl) {
-      if (cfgOk && cfg && cfg.learning) {
-        statusEl.textContent = resp || "Learning… play a MIDI note within 15 seconds";
-        statusEl.classList.remove("warn");
-        startMidiLearnPoll();
-      } else {
-        statusEl.textContent = resp || cfg?.learn_message || "Learn cancelled";
-        statusEl.classList.toggle("warn", !cfg?.learn_message?.startsWith("Mapped "));
-        stopMidiLearnPoll();
+    await refreshMidiUi(false);
+    if (statusEl && resp) {
+      const [cfgOk, cfg] = await api.midi_get_config();
+      if (!cfgOk || !cfg || !cfg.learning) {
+        statusEl.textContent = resp;
+        statusEl.classList.toggle("warn", !String(resp).startsWith("Mapped "));
       }
-    } else if (cfgOk && cfg && cfg.learning) {
-      startMidiLearnPoll();
-    } else {
-      stopMidiLearnPoll();
     }
-    refreshMidiUi(false);
   }
 
 
