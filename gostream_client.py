@@ -87,6 +87,7 @@ ALLOWED_GET_CMDS = frozenset({
     CMD_DSK_FILL_SOURCE,
     CMD_MEDIA_PLAYER,
     CMD_LIVE_STREAM_OUTPUT_KEY,
+    CMD_LIVE_STREAM_OUTPUT_ENABLE,
     CMD_LIVE_STREAM_OUTPUT_STATUS,
     CMD_MULTI_SOURCE_ENABLE,
     CMD_MULTI_SOURCE_WINDOW_SOURCE,
@@ -160,6 +161,8 @@ class GoStreamClient:
         self._stream_live_on = False
         self._stream1_output_live = False
         self._stream2_output_live = False
+        self._stream1_output_enabled: Optional[bool] = None
+        self._stream2_output_enabled: Optional[bool] = None
         self._usk1_on = False
         self._usk1_key_type: Optional[int | str] = None
         self._usk1_luma_fill: Optional[int] = None
@@ -226,6 +229,14 @@ class GoStreamClient:
     @property
     def stream2_output_live(self) -> bool:
         return self._stream2_output_live
+
+    @property
+    def stream1_output_enabled(self) -> Optional[bool]:
+        return self._stream1_output_enabled
+
+    @property
+    def stream2_output_enabled(self) -> Optional[bool]:
+        return self._stream2_output_enabled
 
     @property
     def multisource_enabled(self) -> bool:
@@ -519,6 +530,8 @@ class GoStreamClient:
         self.send_get(CMD_PGM_INDEX)
         self.send_get(CMD_PVW_INDEX)
         self.send_get(CMD_LIVE)
+        self.send_get(CMD_LIVE_STREAM_OUTPUT_ENABLE, [STREAM_1_ID])
+        self.send_get(CMD_LIVE_STREAM_OUTPUT_ENABLE, [STREAM_2_ID])
         self.send_get(CMD_LIVE_STREAM_OUTPUT_STATUS, [STREAM_1_ID])
         self.send_get(CMD_LIVE_STREAM_OUTPUT_STATUS, [STREAM_2_ID])
         self.request_stream_ui_state()
@@ -547,6 +560,16 @@ class GoStreamClient:
         elif cmd_id == CMD_LIVE:
             try:
                 self._stream_live_on = int(val[0]) != 0
+            except (TypeError, ValueError):
+                pass
+        elif cmd_id == CMD_LIVE_STREAM_OUTPUT_ENABLE and len(val) >= 2:
+            try:
+                stream_id = int(val[0])
+                enabled = int(val[1]) != 0
+                if stream_id == STREAM_1_ID:
+                    self._stream1_output_enabled = enabled
+                elif stream_id == STREAM_2_ID:
+                    self._stream2_output_enabled = enabled
             except (TypeError, ValueError):
                 pass
         elif cmd_id == CMD_LIVE_STREAM_OUTPUT_STATUS and len(val) >= 2:

@@ -1610,7 +1610,7 @@
         </div>
         <div class="testStreamSection">
           <h3>Test stream (Stream 2)</h3>
-          <p class="small" style="margin:0 0 8px 0; color:#64748b;">Uses the switcher&apos;s saved <b>Stream 2</b> RTMP destination (no key entry here). Start and stop only affect Stream 2 — not main Go Live.</p>
+          <p class="small" style="margin:0 0 8px 0; color:#64748b;">Uses the switcher&apos;s saved <b>Stream 2</b> RTMP destination (no key entry here). <b>Start</b> begins encoding on Stream 2 only (Stream 1 is not sent). Use main <b>Go Live</b> for Stream 1.</p>
           <p id="testStream2Status" class="testStreamStatus liveNo">Stream 2: —</p>
           <div class="testStreamActions">
             <button type="button" class="primary" id="testStream2StartBtn" onclick="testStream2Start()">Start</button>

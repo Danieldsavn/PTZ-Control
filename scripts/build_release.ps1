@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
-$Version = "3.16"
+$Version = "3.17"
 Write-Host "Building PTZ-Control v$Version"
 
 # Sync version.json
@@ -47,9 +47,9 @@ $manifest = @{
     version       = $Version
     download_url  = "https://github.com/Danieldsavn/PTZ-Control/releases/download/v$Version/PTZ-Control.exe"
     sha256        = $hash
-    release_notes = "God Bless Screen MIDI, Test stream (Stream 2), MIDI learn fixes, manual update check, single-instance guard."
+    release_notes = "Fix Stream 2 test stream Start (encoder live command), God Bless MIDI, MIDI learn, manual update check."
 } | ConvertTo-Json -Depth 3
 $manifest | Set-Content -Path "release\update.json" -Encoding UTF8
 Write-Host "Wrote release\update.json"
 Write-Host "Artifacts in dist\:"
-Get-ChildItem dist -Filter "*.exe" | ForEach-Object { Write-Host ("  {0} ({1:N1} MB)" -f $_.Name, ($_.Length / 1MB)) }
+Get-ChildItem dist -Filter "*.exe" | ForEach-Object { Write-Host ("  {0} ({1:N1} MiB)" -f $_.Name, ($_.Length / 1MB)) }

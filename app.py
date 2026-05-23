@@ -728,6 +728,9 @@ class SwitcherManager:
         self._last_usk_verify = 0.0
         self._god_bless_active = False
         self._god_bless_return_still_index: int | None = None
+        self._test_stream_active = False
+        self._test_stream_owns_live = False
+        self._test_stream_saved_stream1_enable: bool | None = None
         self._ensure_polling()
         self._try_connect()
 
@@ -949,6 +952,12 @@ class SwitcherManager:
                 ok_pvw = self._client.send_get("pvwIndex")
                 ok_live = self._client.send_get("live")
                 self._client.send_get(
+                    "liveStreamOutputEnable", [STREAM_1_ID]
+                )
+                self._client.send_get(
+                    "liveStreamOutputEnable", [STREAM_2_ID]
+                )
+                self._client.send_get(
                     "liveStreamOutputStatus", [STREAM_1_ID]
                 )
                 self._client.send_get(
@@ -1076,10 +1085,36 @@ class SwitcherManager:
             self._god_bless_active = False
             return False, f"God Bless Screen error: {e}"
 
+    def _end_test_stream_session(self, *, restore_stream1_enable: bool) -> None:
+        """Stop a test-stream session started by test_stream_start (owns global live)."""
+        if not self._test_stream_owns_live:
+            return
+        self._client.set_live(False)
+        time.sleep(0.12)
+        self._client.set_stream_output_enable(STREAM_2_ID, False)
+        time.sleep(0.06)
+        if restore_stream1_enable and self._test_stream_saved_stream1_enable:
+            self._client.set_stream_output_enable(STREAM_1_ID, True)
+            time.sleep(0.06)
+        self._test_stream_active = False
+        self._test_stream_owns_live = False
+        self._test_stream_saved_stream1_enable = None
+
     def stream_go_live(self):
         if not self._ensure_connected():
             return False, "Switcher not connected (reconnecting…)"
         try:
+            if self._test_stream_owns_live:
+                saved = self._test_stream_saved_stream1_enable
+                self._end_test_stream_session(restore_stream1_enable=False)
+                time.sleep(0.1)
+                if saved:
+                    self._client.set_stream_output_enable(STREAM_1_ID, True)
+                    time.sleep(0.08)
+            elif self._test_stream_active:
+                self._client.set_stream_output_enable(STREAM_2_ID, False)
+                time.sleep(0.06)
+                self._test_stream_active = False
             if not self._client.set_live(True):
                 return False, "Failed to start live stream"
             time.sleep(0.2)
@@ -1095,11 +1130,18 @@ class SwitcherManager:
         if not self._ensure_connected():
             return False, "Switcher not connected (reconnecting…)"
         try:
-            if not self._client.set_live(False):
-                return False, "Failed to stop live stream"
+            if self._test_stream_owns_live:
+                self._end_test_stream_session(restore_stream1_enable=True)
+            else:
+                if not self._client.set_live(False):
+                    return False, "Failed to stop live stream"
+                if self._test_stream_active:
+                    self._client.set_stream_output_enable(STREAM_2_ID, False)
+                    self._test_stream_active = False
             time.sleep(0.2)
             self._client.send_get("live")
             self._client.send_get("liveStreamOutputStatus", [STREAM_1_ID])
+            self._client.send_get("liveStreamOutputStatus", [STREAM_2_ID])
             time.sleep(0.08)
             self._refresh_status_cache()
             return True, "Stream stopped"
@@ -1107,27 +1149,79 @@ class SwitcherManager:
             return False, f"Stop error: {e}"
 
     def test_stream_start(self):
-        """Start Stream 2 output (persistent RTMP key configured on switcher)."""
+        """Start Stream 2 (arms output + starts encoder when main is offline)."""
         if not self._ensure_connected():
             return False, "Switcher not connected (reconnecting…)"
         try:
-            if not self._client.set_stream_output_enable(STREAM_2_ID, True):
-                return False, "Failed to start test stream (Stream 2)"
-            time.sleep(0.2)
+            if self._test_stream_active and self._client.stream2_output_live:
+                return True, "Test stream already live (Stream 2)"
+
+            main_live = self._client.stream_live_on
+            if main_live:
+                # Main encode session already running — add Stream 2 to it.
+                if not self._client.set_stream_output_enable(STREAM_2_ID, True):
+                    return False, "Failed to start test stream (Stream 2)"
+                self._test_stream_active = True
+                self._test_stream_owns_live = False
+            else:
+                s1_enabled = self._client.stream1_output_enabled
+                if s1_enabled is None:
+                    self._client.send_get("liveStreamOutputEnable", [STREAM_1_ID])
+                    time.sleep(0.12)
+                    s1_enabled = self._client.stream1_output_enabled
+                self._test_stream_saved_stream1_enable = (
+                    True if s1_enabled is None else bool(s1_enabled)
+                )
+                if self._test_stream_saved_stream1_enable:
+                    if not self._client.set_stream_output_enable(STREAM_1_ID, False):
+                        return False, "Failed to prepare test stream (Stream 1)"
+                    time.sleep(0.08)
+                if not self._client.set_stream_output_enable(STREAM_2_ID, True):
+                    if self._test_stream_saved_stream1_enable:
+                        self._client.set_stream_output_enable(STREAM_1_ID, True)
+                    return False, "Failed to start test stream (Stream 2)"
+                time.sleep(0.08)
+                if not self._client.set_live(True):
+                    self._client.set_stream_output_enable(STREAM_2_ID, False)
+                    if self._test_stream_saved_stream1_enable:
+                        self._client.set_stream_output_enable(STREAM_1_ID, True)
+                    self._test_stream_saved_stream1_enable = None
+                    return False, "Failed to start encoder for test stream"
+                self._test_stream_active = True
+                self._test_stream_owns_live = True
+
+            time.sleep(0.35)
+            self._client.send_get("live")
             self._client.send_get("liveStreamOutputStatus", [STREAM_2_ID])
-            time.sleep(0.08)
+            time.sleep(0.1)
             self._refresh_status_cache()
+            if not self._client.stream2_output_live:
+                return (
+                    False,
+                    "Stream 2 did not go live — check Stream 2 RTMP URL/key on the switcher",
+                )
             return True, "Test stream started (Stream 2)"
         except Exception as e:
+            self._test_stream_active = False
+            self._test_stream_owns_live = False
+            self._test_stream_saved_stream1_enable = None
             return False, f"Test stream start error: {e}"
 
     def test_stream_stop(self):
-        """Stop Stream 2 output only (does not affect Stream 1 / main Go Live)."""
+        """Stop Stream 2 only; restore Stream 1 arm state if we started the encoder."""
         if not self._ensure_connected():
             return False, "Switcher not connected (reconnecting…)"
         try:
-            if not self._client.set_stream_output_enable(STREAM_2_ID, False):
-                return False, "Failed to stop test stream (Stream 2)"
+            if self._test_stream_owns_live:
+                self._end_test_stream_session(restore_stream1_enable=True)
+            elif self._client.stream_live_on and self._test_stream_active:
+                if not self._client.set_stream_output_enable(STREAM_2_ID, False):
+                    return False, "Failed to stop test stream (Stream 2)"
+                self._test_stream_active = False
+            else:
+                if not self._client.set_stream_output_enable(STREAM_2_ID, False):
+                    return False, "Failed to stop test stream (Stream 2)"
+                self._test_stream_active = False
             time.sleep(0.2)
             self._client.send_get("liveStreamOutputStatus", [STREAM_2_ID])
             time.sleep(0.08)

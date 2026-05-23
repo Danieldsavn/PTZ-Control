@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.16/PTZ-Control.exe",
-    "sha256":  "40e565fde15e21bbcfcdd085ae7fe974c7e7311b1f38695e6b70f0a656e5fb67",
-    "version":  "3.16",
-    "release_notes":  "God Bless Screen MIDI, Test stream (Stream 2), MIDI learn fixes, manual update check, single-instance guard, restart via updater."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.17/PTZ-Control.exe",
+    "sha256":  "5603d8bf299eea45f38805efa542da11d61e77844de48373c2d402582d489084",
+    "version":  "3.17",
+    "release_notes":  "Fix Stream 2 test stream Start (encoder live command)."
 }
