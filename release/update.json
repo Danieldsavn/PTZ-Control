@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.17/PTZ-Control.exe",
-    "sha256":  "5603d8bf299eea45f38805efa542da11d61e77844de48373c2d402582d489084",
-    "version":  "3.17",
-    "release_notes":  "Fix Stream 2 test stream Start (encoder live command)."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.18/PTZ-Control.exe",
+    "sha256":  "62fb36814c9db43d024efbf1c613953c43d82eafb11833edb71dc48e3ec3696c",
+    "version":  "3.18",
+    "release_notes":  "Fix MIDI learned notes not triggering scenes (velocity-0 controllers)."
 }

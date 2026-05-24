@@ -3,10 +3,13 @@ MIDI input (receive-only) — map note-on messages to switcher scene actions.
 """
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 import time
 from typing import Any, Callable, Optional
+
+_log = logging.getLogger(__name__)
 
 try:
     import mido
@@ -101,24 +104,30 @@ def normalize_midi_config(raw: Any) -> dict[str, Any]:
     return {"device": device, "notes": notes}
 
 
-def _extract_note(msg: Any) -> Optional[int]:
-    """Return MIDI note number from note_on / note_off, or None."""
+def _note_press(msg: Any, active_notes: set[int]) -> Optional[int]:
+    """
+    Return note number when a key/pad is pressed.
+
+    Handles normal note_on (velocity > 0) and controllers that only send
+    note_on with velocity 0 for a press. Ignores release (note_off or
+    note_on velocity 0 after the note was already active).
+    """
     if not hasattr(msg, "type"):
         return None
     if msg.type == "note_on":
-        vel = getattr(msg, "velocity", 0)
-        if vel <= 0:
-            return int(msg.note)
-        return int(msg.note)
+        note = int(msg.note)
+        vel = int(getattr(msg, "velocity", 0) or 0)
+        if vel > 0:
+            active_notes.add(note)
+            return note
+        was_active = note in active_notes
+        active_notes.discard(note)
+        if not was_active:
+            return note
+        return None
     if msg.type == "note_off":
-        return int(msg.note)
+        active_notes.discard(int(msg.note))
     return None
-
-
-def _is_note_on(msg: Any) -> bool:
-    if not hasattr(msg, "type") or msg.type != "note_on":
-        return False
-    return getattr(msg, "velocity", 0) > 0
 
 
 class MidiManager:
@@ -143,6 +152,8 @@ class MidiManager:
         self._learn_message: str = ""
         self._last_learned: Optional[dict[str, Any]] = None
         self._midi_cfg = normalize_midi_config({})
+        self._active_notes: set[int] = set()
+        self._last_trigger_at: dict[int, float] = {}
         self.reload_config()
         self.start()
 
@@ -180,14 +191,17 @@ class MidiManager:
             )
 
     def get_config(self) -> dict[str, Any]:
+        device = ""
         with self._lock:
             self._sync_learn_timeout_locked()
             notes = dict(self._midi_cfg["notes"])
-            device = self._midi_cfg["device"]
+            device = (self._midi_cfg.get("device") or "").strip()
             learn = self._learn_scene
             learn_message = self._learn_message
             last = dict(self._last_learned) if self._last_learned else None
             learn_expires_at = self._learn_deadline
+        if device and not self._listener_alive():
+            self._restart_listener()
         return {
             "available": midi_available(),
             "device": device,
@@ -367,14 +381,15 @@ class MidiManager:
                 self._port = None
 
     def _handle_message(self, msg: Any) -> None:
+        note = _note_press(msg, self._active_notes)
+        if note is None:
+            return
+
         learn_scene: Optional[str] = None
         with self._lock:
             learn_scene = self._learn_scene
 
         if learn_scene:
-            note = _extract_note(msg)
-            if note is None:
-                return
             with self._lock:
                 if self._learn_scene != learn_scene:
                     return
@@ -389,12 +404,16 @@ class MidiManager:
             self._disarm_learn_timer()
             return
 
-        if not _is_note_on(msg):
+        now = time.monotonic()
+        last = self._last_trigger_at.get(note, 0.0)
+        if now - last < 0.12:
             return
-        note = int(msg.note)
+        self._last_trigger_at[note] = now
 
         scene_to_run: Optional[str] = None
         with self._lock:
+            if self._learn_scene is not None:
+                return
             for scene_id, mapped in self._midi_cfg["notes"].items():
                 if mapped is not None and int(mapped) == note:
                     scene_to_run = scene_id
@@ -402,12 +421,18 @@ class MidiManager:
         if scene_to_run:
             threading.Thread(
                 target=self._run_scene_safe,
-                args=(scene_to_run,),
+                args=(scene_to_run, note),
                 daemon=True,
             ).start()
 
-    def _run_scene_safe(self, scene_id: str) -> None:
+    def _run_scene_safe(self, scene_id: str, note: int) -> None:
         try:
             self._trigger_scene(scene_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning(
+                "MIDI scene %s (note %s) failed: %s",
+                scene_id,
+                note,
+                exc,
+                exc_info=True,
+            )
