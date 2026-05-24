@@ -1425,7 +1425,7 @@
       <button type="button" class="ghost stillBtn" id="stillCecilBtn" onclick="activateStill(3)">Cecil</button>
       <span class="streamLabel" style="margin-left:8px;">Splitview</span>
       <button type="button" class="ghost splitviewBtn" id="splitviewOnBtn" onclick="splitviewOn()">Splitview On</button>
-      <button type="button" class="ghost splitviewBtn" id="splitviewOffBtn" onclick="splitviewOff()">Splitview Off</button>
+      <button type="button" class="ghost keyBtn splitviewBtn" id="splitviewOffBtn" onclick="splitviewOff()">Splitview Off</button>
       <span class="streamBarSectionGap" aria-hidden="true"></span>
       <span class="streamLabel">Stream</span>
       <button type="button" class="primary goLive" id="streamGoLiveBtn" onclick="streamGoLive()">Go Live</button>
@@ -1800,8 +1800,48 @@
     "Please power on the video switcher and restart the application.";
   const SWITCHER_DEPENDENT_STARTUP_IDS = ["usk", "multisource", "dsk", "streamui"];
   let switcherConnected = false;
+  let switcherSplitviewOn = false;
   let switcherBarBusy = false;
   let pollObsPending = false;
+  /** Hold stream-bar button state after a click until switcher status catches up (avoids flicker). */
+  const STREAM_BAR_PENDING_MS = 2500;
+  const STREAM_BAR_POLL_DELAY_MS = 1400;
+  let streamBarPending = {};
+  let streamBarPollDebounceTimer = null;
+
+  function setStreamBarPending(key, value) {
+    streamBarPending[key] = { value: value, until: Date.now() + STREAM_BAR_PENDING_MS };
+  }
+
+  function getStreamBarPending(key) {
+    const entry = streamBarPending[key];
+    if (!entry) return undefined;
+    if (Date.now() > entry.until) {
+      delete streamBarPending[key];
+      return undefined;
+    }
+    return entry.value;
+  }
+
+  function clearStreamBarPending(key) {
+    delete streamBarPending[key];
+  }
+
+  function resolveStreamBarValue(key, actual) {
+    const pending = getStreamBarPending(key);
+    if (pending === undefined) return actual;
+    if (actual === pending) clearStreamBarPending(key);
+    return pending;
+  }
+
+  function scheduleStreamBarPoll(delayMs) {
+    const delay = delayMs != null ? delayMs : STREAM_BAR_POLL_DELAY_MS;
+    if (streamBarPollDebounceTimer) clearTimeout(streamBarPollDebounceTimer);
+    streamBarPollDebounceTimer = setTimeout(function () {
+      streamBarPollDebounceTimer = null;
+      pollObsStatus();
+    }, delay);
+  }
   let pollOnlineIntervalId = null;
   let pollObsIntervalId = null;
   let multisourceLayoutApplied = false;
@@ -1849,7 +1889,12 @@
   function setSplitviewUi(on) {
     const live = !!on;
     if (dom.splitviewOnBtn) dom.splitviewOnBtn.classList.toggle("on", live);
-    if (dom.splitviewOffBtn) dom.splitviewOffBtn.classList.toggle("on", !live);
+    if (dom.splitviewOffBtn) {
+      dom.splitviewOffBtn.classList.remove("on");
+      dom.splitviewOffBtn.classList.toggle("offActive", !live);
+    }
+    updateCameraCutUi("cam1");
+    updateCameraCutUi("cam2");
   }
 
   function setStreamLiveUi(live) {
@@ -2350,6 +2395,12 @@
   }
 
   // -------- OBS Status & Control --------
+  function isSplitviewActive() {
+    const pending = getStreamBarPending("splitviewOn");
+    if (pending !== undefined) return !!pending;
+    return switcherSplitviewOn;
+  }
+
   function updateCameraCutUi(cam) {
     const cutBtn = dom[cam + "CutBtn"];
     const autoBtn = dom[cam + "AutoBtn"];
@@ -2359,7 +2410,13 @@
     if (connectingEl) connectingEl.style.display = camOnline ? "none" : "inline-flex";
     if (connectedEl) connectedEl.style.display = "none";
     if (cutBtn) cutBtn.disabled = !switcherConnected;
-    if (autoBtn) autoBtn.disabled = !switcherConnected;
+    if (autoBtn) {
+      const autoDisabled = !switcherConnected || isSplitviewActive();
+      autoBtn.disabled = autoDisabled;
+      autoBtn.title = isSplitviewActive()
+        ? "AUTO disabled during splitview (use CUT to change the camera in the layout)"
+        : "Mix transition (fade) to this camera";
+    }
   }
 
   function updateObsBar(cam, obsStatus) {
@@ -2424,6 +2481,7 @@
       } else {
         switcherConnected = false;
         switcherWasConnected = false;
+        switcherSplitviewOn = false;
         setSwitcherBarConnected(false);
         updateCameraCutUi("cam1");
         updateCameraCutUi("cam2");
@@ -2433,6 +2491,7 @@
     } catch (e) {
       switcherConnected = false;
       switcherWasConnected = false;
+      switcherSplitviewOn = false;
       multisourceLayoutApplied = false;
       setSwitcherBarConnected(false);
       updateCameraCutUi("cam1");
@@ -2442,15 +2501,17 @@
     }
   }
 
-  async function runSwitcherBarAction(optimisticFn, apiFn) {
+  async function runSwitcherBarAction(optimisticFn, apiFn, pendingKey, pendingValue) {
     if (switcherBarBusy) return;
     if (!requireSwitcherConnected()) return;
+    if (pendingKey != null) setStreamBarPending(pendingKey, pendingValue);
     if (typeof optimisticFn === "function") optimisticFn();
     switcherBarBusy = true;
     try {
       await apiFn();
     } finally {
       switcherBarBusy = false;
+      scheduleStreamBarPoll();
     }
   }
 
@@ -2587,7 +2648,8 @@
 
   function updateStreamControls(obsStatus) {
     const connected = !!(obsStatus && obsStatus.connected);
-    const isLive = connected && !!(obsStatus && obsStatus.streamLive);
+    const rawLive = connected && !!(obsStatus && obsStatus.streamLive);
+    const isLive = resolveStreamBarValue("streamLive", rawLive);
     setSwitcherBarConnected(connected);
     const liveBtn = document.getElementById("streamGoLiveBtn");
     if (liveBtn) liveBtn.classList.toggle("on", isLive);
@@ -2597,8 +2659,12 @@
       stopBtn.classList.toggle("on", isLive);
       stopBtn.setAttribute("aria-disabled", stopBtn.disabled ? "true" : "false");
     }
-    const uskOn = !!(obsStatus && obsStatus.usk1On);
-    const dskOn = !!(obsStatus && obsStatus.dsk1On);
+    const uskOn = resolveStreamBarValue("usk1On", !!(obsStatus && obsStatus.usk1On));
+    const dskOn = resolveStreamBarValue("dsk1On", !!(obsStatus && obsStatus.dsk1On));
+    const splitOn = resolveStreamBarValue(
+      "splitviewOn",
+      !!(obsStatus && obsStatus.splitviewOn)
+    );
     if (dom.usk1OnBtn) {
       dom.usk1OnBtn.classList.toggle("on", uskOn);
     }
@@ -2613,12 +2679,24 @@
       dom.dsk1OffBtn.classList.remove("on");
       dom.dsk1OffBtn.classList.toggle("offActive", !dskOn);
     }
-    if (dom.splitviewOnBtn) dom.splitviewOnBtn.classList.toggle("on", !!(obsStatus && obsStatus.splitviewOn));
-    if (dom.splitviewOffBtn) dom.splitviewOffBtn.classList.toggle("on", !!(obsStatus && !obsStatus.splitviewOn));
-    updateStillButtons(obsStatus && obsStatus.mp1StillIndex);
+    switcherSplitviewOn = splitOn;
+    if (dom.splitviewOnBtn) dom.splitviewOnBtn.classList.toggle("on", splitOn);
+    if (dom.splitviewOffBtn) {
+      dom.splitviewOffBtn.classList.remove("on");
+      dom.splitviewOffBtn.classList.toggle("offActive", !splitOn);
+    }
+    const stillIdx = getStreamBarPending("mp1StillIndex");
+    const effectiveStill =
+      stillIdx !== undefined ? stillIdx : (obsStatus && obsStatus.mp1StillIndex);
+    if (stillIdx !== undefined && obsStatus && obsStatus.mp1StillIndex === stillIdx) {
+      clearStreamBarPending("mp1StillIndex");
+    }
+    updateStillButtons(effectiveStill);
     updateStreamBarStatus(obsStatus);
     const streamPanel = document.getElementById("settingsTabPanelStream");
     if (streamPanel && streamPanel.classList.contains("active")) refreshStreamStatus();
+    updateCameraCutUi("cam1");
+    updateCameraCutUi("cam2");
   }
 
   async function streamGoLive() {
@@ -2630,16 +2708,18 @@
           if (!api?.switcher_stream_go_live) return;
           const [ok, resp] = await api.switcher_stream_go_live();
           if (!ok) {
+            clearStreamBarPending("streamLive");
             showStreamError("Go Live: " + resp);
             pollObsStatus();
-            return;
           }
-          pollObsStatus();
         } catch (e) {
+          clearStreamBarPending("streamLive");
           showStreamError("Go Live: " + e);
           pollObsStatus();
         }
-      }
+      },
+      "streamLive",
+      true
     );
   }
 
@@ -2690,13 +2770,19 @@
           const api = window.pywebview?.api;
           if (!api?.switcher_stream_stop) return;
           const [ok, resp] = await api.switcher_stream_stop();
-          if (!ok) showStreamError("Stop: " + resp);
-          pollObsStatus();
+          if (!ok) {
+            clearStreamBarPending("streamLive");
+            showStreamError("Stop: " + resp);
+            pollObsStatus();
+          }
         } catch (e) {
+          clearStreamBarPending("streamLive");
           showStreamError("Stop: " + e);
           pollObsStatus();
         }
-      }
+      },
+      "streamLive",
+      false
     );
   }
 
@@ -2708,13 +2794,19 @@
           const api = window.pywebview?.api;
           if (!api?.switcher_usk1_on) return;
           const [ok, resp] = await api.switcher_usk1_on();
-          if (!ok) showStreamError("Lyrics: " + resp);
-          pollObsStatus();
+          if (!ok) {
+            clearStreamBarPending("usk1On");
+            showStreamError("Lyrics: " + resp);
+            pollObsStatus();
+          }
         } catch (e) {
+          clearStreamBarPending("usk1On");
           showStreamError("Lyrics: " + e);
           pollObsStatus();
         }
-      }
+      },
+      "usk1On",
+      true
     );
   }
   async function usk1Off() {
@@ -2725,13 +2817,19 @@
           const api = window.pywebview?.api;
           if (!api?.switcher_usk1_off) return;
           const [ok, resp] = await api.switcher_usk1_off();
-          if (!ok) showStreamError("Lyrics: " + resp);
-          pollObsStatus();
+          if (!ok) {
+            clearStreamBarPending("usk1On");
+            showStreamError("Lyrics: " + resp);
+            pollObsStatus();
+          }
         } catch (e) {
+          clearStreamBarPending("usk1On");
           showStreamError("Lyrics: " + e);
           pollObsStatus();
         }
-      }
+      },
+      "usk1On",
+      false
     );
   }
   async function dsk1On() {
@@ -2742,13 +2840,19 @@
           const api = window.pywebview?.api;
           if (!api?.switcher_dsk1_on) return;
           const [ok, resp] = await api.switcher_dsk1_on();
-          if (!ok) showStreamError("Title: " + resp);
-          pollObsStatus();
+          if (!ok) {
+            clearStreamBarPending("dsk1On");
+            showStreamError("Title: " + resp);
+            pollObsStatus();
+          }
         } catch (e) {
+          clearStreamBarPending("dsk1On");
           showStreamError("Title: " + e);
           pollObsStatus();
         }
-      }
+      },
+      "dsk1On",
+      true
     );
   }
   async function dsk1Off() {
@@ -2759,13 +2863,19 @@
           const api = window.pywebview?.api;
           if (!api?.switcher_dsk1_off) return;
           const [ok, resp] = await api.switcher_dsk1_off();
-          if (!ok) showStreamError("Title: " + resp);
-          pollObsStatus();
+          if (!ok) {
+            clearStreamBarPending("dsk1On");
+            showStreamError("Title: " + resp);
+            pollObsStatus();
+          }
         } catch (e) {
+          clearStreamBarPending("dsk1On");
           showStreamError("Title: " + e);
           pollObsStatus();
         }
-      }
+      },
+      "dsk1On",
+      false
     );
   }
 
@@ -2777,13 +2887,19 @@
           const api = window.pywebview?.api;
           if (!api?.switcher_splitview_on) return;
           const [ok, resp] = await api.switcher_splitview_on();
-          if (!ok) showStreamError("Splitview: " + resp);
-          pollObsStatus();
+          if (!ok) {
+            clearStreamBarPending("splitviewOn");
+            showStreamError("Splitview: " + resp);
+            pollObsStatus();
+          }
         } catch (e) {
+          clearStreamBarPending("splitviewOn");
           showStreamError("Splitview: " + e);
           pollObsStatus();
         }
-      }
+      },
+      "splitviewOn",
+      true
     );
   }
 
@@ -2795,13 +2911,19 @@
           const api = window.pywebview?.api;
           if (!api?.switcher_splitview_off) return;
           const [ok, resp] = await api.switcher_splitview_off();
-          if (!ok) showStreamError("Splitview: " + resp);
-          pollObsStatus();
+          if (!ok) {
+            clearStreamBarPending("splitviewOn");
+            showStreamError("Splitview: " + resp);
+            pollObsStatus();
+          }
         } catch (e) {
+          clearStreamBarPending("splitviewOn");
           showStreamError("Splitview: " + e);
           pollObsStatus();
         }
-      }
+      },
+      "splitviewOn",
+      false
     );
   }
 
@@ -2813,13 +2935,19 @@
           const api = window.pywebview?.api;
           if (!api?.switcher_activate_still) return;
           const [ok, resp] = await api.switcher_activate_still(stillIndex);
-          if (!ok) showStreamError("Still: " + resp);
-          pollObsStatus();
+          if (!ok) {
+            clearStreamBarPending("mp1StillIndex");
+            showStreamError("Still: " + resp);
+            pollObsStatus();
+          }
         } catch (e) {
+          clearStreamBarPending("mp1StillIndex");
           showStreamError("Still: " + e);
           pollObsStatus();
         }
-      }
+      },
+      "mp1StillIndex",
+      stillIndex
     );
   }
 
@@ -2870,6 +2998,10 @@
     try {
       if (!switcherConnected) {
         showStreamToast("Switcher not connected", "error");
+        return;
+      }
+      if (isSplitviewActive()) {
+        status(cam, "AUTO disabled during splitview — use CUT");
         return;
       }
       if (!window.pywebview?.api?.obs_fade) return;

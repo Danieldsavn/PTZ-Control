@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.20/PTZ-Control.exe",
-    "sha256":  "8eb49a41cff6302cbd531eb9a6ffef8a82f07e6a47dad798834a18ad086699c1",
-    "version":  "3.20",
-    "release_notes":  "AUTO mix-fade beside CUT, faster transitions, focus Auto/Manual UI fix, stability and debug logging."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.21/PTZ-Control.exe",
+    "sha256":  "159611be284ed00aaf9ae8249e56f148bd04f4dc36c02fdd3cb851edbf511319",
+    "version":  "3.21",
+    "release_notes":  "Stream bar debounce, splitview styling, AUTO disabled in splitview, update manifest fix."
 }
