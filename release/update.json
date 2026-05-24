@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.19/PTZ-Control.exe",
-    "sha256":  "991825e35d31521fb5fe88cbd3b9d30280749cdf52cacc999b3cd0af847c9e23",
-    "version":  "3.19",
-    "release_notes":  "Fix stream bar lockups (non-blocking reconnect), MIDI trigger fix, Stream 2 test stream fix."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.20/PTZ-Control.exe",
+    "sha256":  "8eb49a41cff6302cbd531eb9a6ffef8a82f07e6a47dad798834a18ad086699c1",
+    "version":  "3.20",
+    "release_notes":  "AUTO mix-fade beside CUT, faster transitions, focus Auto/Manual UI fix, stability and debug logging."
 }

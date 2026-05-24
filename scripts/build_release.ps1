@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
-$Version = "3.19"
+$Version = "3.20"
 Write-Host "Building PTZ-Control v$Version"
 
 # Sync version.json
@@ -36,7 +36,7 @@ if ($iscc) {
     & $iscc (Join-Path $Root "installer\PTZ-Control.iss")
     if ($LASTEXITCODE -ne 0) { throw "Installer compile failed" }
 } else {
-    Write-Warning "Inno Setup not found — skipping PTZ-Control-Setup.exe"
+    Write-Warning "Inno Setup not found - skipping PTZ-Control-Setup.exe"
 }
 
 $exe = Join-Path $Root "dist\PTZ-Control.exe"
@@ -47,9 +47,12 @@ $manifest = @{
     version       = $Version
     download_url  = "https://github.com/Danieldsavn/PTZ-Control/releases/download/v$Version/PTZ-Control.exe"
     sha256        = $hash
-    release_notes = "Fix stream bar lockups (non-blocking reconnect, connection lock), MIDI trigger fix, Stream 2 test stream fix."
+    release_notes = "AUTO mix-fade beside CUT, faster transitions, focus Auto/Manual UI fix, stability and debug logging."
 } | ConvertTo-Json -Depth 3
 $manifest | Set-Content -Path "release\update.json" -Encoding UTF8
 Write-Host "Wrote release\update.json"
-Write-Host "Artifacts in dist\:"
-Get-ChildItem dist -Filter "*.exe" | ForEach-Object { Write-Host ("  {0} ({1:N1} MiB)" -f $_.Name, ($_.Length / 1MB)) }
+Write-Host "Artifacts in dist:"
+Get-ChildItem dist -Filter "*.exe" | ForEach-Object {
+    $mb = [math]::Round($_.Length / 1MB, 1)
+    Write-Host "  $($_.Name) ($mb MB)"
+}
