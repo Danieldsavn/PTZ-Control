@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.21/PTZ-Control.exe",
-    "sha256":  "159611be284ed00aaf9ae8249e56f148bd04f4dc36c02fdd3cb851edbf511319",
-    "version":  "3.21",
-    "release_notes":  "Stream bar debounce, splitview styling, AUTO disabled in splitview, update manifest fix."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.22/PTZ-Control.exe",
+    "sha256":  "f970942b65154d5d292b3df2c883603c2aab989ee707de61c26acd68b2b54eab",
+    "version":  "3.22",
+    "release_notes":  "Start maximized; larger camera previews (+20%)."
 }

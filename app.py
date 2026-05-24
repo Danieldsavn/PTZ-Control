@@ -2554,6 +2554,7 @@ def main():
         frameless=True,
         easy_drag=False,
         on_top=True,
+        maximized=True,
         js_api=api,
     )
 
