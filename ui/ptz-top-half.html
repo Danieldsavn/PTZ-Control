@@ -100,6 +100,7 @@
     .streamBarWrap {
       position: relative;
       flex: 0 0 auto;
+      margin-bottom: 2px;
     }
     .controlsArea {
       flex: 1 1 0;
@@ -349,8 +350,8 @@
       align-items: center;
       justify-content: flex-end;
       gap: 8px;
-      width: 200px;
-      min-width: 200px;
+      width: 280px;
+      min-width: 280px;
     }
     .obsCutSlot .obsConnecting,
     .obsCutSlot .obsConnected {
@@ -484,36 +485,38 @@
     }
     .streamToast {
       position: absolute;
-      left: 12px;
-      right: 12px;
-      bottom: 4px;
-      z-index: 50;
+      left: 0;
+      right: 0;
+      top: calc(100% + 2px);
+      z-index: 40;
       pointer-events: none;
       display: flex;
       justify-content: center;
+      min-height: 0;
     }
     .streamToastMsg {
-      max-width: 100%;
-      padding: 8px 14px;
-      border-radius: 8px;
-      font-size: 13px;
+      max-width: min(520px, 96%);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
       font-weight: 600;
       color: #fff;
       background: #1e3a5f;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
       opacity: 0;
-      transform: translateY(6px);
-      transition: opacity 0.2s ease, transform 0.2s ease;
+      transition: opacity 0.1s ease;
     }
     .streamToastMsg.visible {
       opacity: 1;
-      transform: translateY(0);
     }
     .streamToastMsg.error {
       background: #b91c1c;
     }
     .streamToastMsg.ok {
       background: #15803d;
+    }
+    .streamToastMsg.warn {
+      background: #b45309;
     }
     
     .hdr { 
@@ -596,6 +599,20 @@
       opacity: 0.65;
     }
     button.cut:disabled:hover { background: #94a3b8; }
+    button.autoTake {
+      background: #1d4ed8;
+      color: #fff;
+      border: none;
+      font-weight: 700;
+      min-width: 56px;
+    }
+    button.autoTake:hover { background: #1e40af; }
+    button.autoTake:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+    button.autoTake:disabled:hover { background: #94a3b8; }
 
     .grid2 {
       display: grid;
@@ -688,7 +705,7 @@
     .panel.editMode .editOnly { display: inline-block; }
 
     /* Switching hold: gray out controls for the live camera */
-    .panel.controlsLocked button:not(.cut),
+    .panel.controlsLocked button:not(.cut):not(.autoTake),
     .panel.controlsLocked input[type="range"],
     .panel.controlsLocked .presetBtn { opacity: 0.5; pointer-events: none; cursor: not-allowed; }
 
@@ -696,7 +713,7 @@
     .panel.trackingOn .presetBtn { opacity: 0.5; pointer-events: none; cursor: not-allowed; }
 
     /* Camera offline: disable controls; Edit button stays usable */
-    .panel.cameraOffline button:not(.editBtn):not(.cut),
+    .panel.cameraOffline button:not(.editBtn):not(.cut):not(.autoTake),
     .panel.cameraOffline input.speed,
     .panel.cameraOffline .presetBtn {
       opacity: 0.5;
@@ -1438,6 +1455,7 @@
             <span class="obsConnecting" id="cam1ObsConnecting"><span class="obsSpinner"></span> Connecting</span>
             <span class="obsConnected" id="cam1ObsConnected" style="display:none;">Connected</span>
             <button class="cut" onclick="obsCut('cam1')" id="cam1CutBtn" disabled>CUT</button>
+            <button class="autoTake" onclick="obsFade('cam1')" id="cam1AutoBtn" disabled title="Mix transition (fade) to this camera">AUTO</button>
           </div>
           <button class="ghost editBtn" onclick="toggleEdit('cam1')">Edit</button>
           <div class="ip">
@@ -1454,8 +1472,8 @@
 
         <div class="rightColContent hideInSimpleMode">
           <div class="focusControlBox">
-            <button class="primary" id="cam1FocusOn" onclick="focusOn('cam1')">Auto Focus ON</button>
-            <button class="ghost" id="cam1FocusOff" onclick="focusOff('cam1')">Auto Focus OFF</button>
+            <button class="primary" id="cam1FocusOn" onclick="focusAuto('cam1')">Auto</button>
+            <button class="ghost" id="cam1FocusOff" onclick="focusManual('cam1')">Manual</button>
             <button type="button" class="ghost focusManualBtn" id="cam1FocusIn" onpointerdown="focusDown('cam1','focus_in')" onpointerup="focusUp('cam1')" onpointercancel="focusUp('cam1')" aria-label="Focus in">In</button>
             <button type="button" class="ghost focusManualBtn" id="cam1FocusOut" onpointerdown="focusDown('cam1','focus_out')" onpointerup="focusUp('cam1')" onpointercancel="focusUp('cam1')" aria-label="Focus out">Out</button>
           </div>
@@ -1520,6 +1538,7 @@
             <span class="obsConnecting" id="cam2ObsConnecting"><span class="obsSpinner"></span> Connecting</span>
             <span class="obsConnected" id="cam2ObsConnected" style="display:none;">Connected</span>
             <button class="cut" onclick="obsCut('cam2')" id="cam2CutBtn" disabled>CUT</button>
+            <button class="autoTake" onclick="obsFade('cam2')" id="cam2AutoBtn" disabled title="Mix transition (fade) to this camera">AUTO</button>
           </div>
           <button class="ghost editBtn" onclick="toggleEdit('cam2')">Edit</button>
           <div class="ip">
@@ -1536,8 +1555,8 @@
 
         <div class="rightColContent hideInSimpleMode">
           <div class="focusControlBox">
-            <button class="primary" id="cam2FocusOn" onclick="focusOn('cam2')">Auto Focus ON</button>
-            <button class="ghost" id="cam2FocusOff" onclick="focusOff('cam2')">Auto Focus OFF</button>
+            <button class="primary" id="cam2FocusOn" onclick="focusAuto('cam2')">Auto</button>
+            <button class="ghost" id="cam2FocusOff" onclick="focusManual('cam2')">Manual</button>
             <button type="button" class="ghost focusManualBtn" id="cam2FocusIn" onpointerdown="focusDown('cam2','focus_in')" onpointerup="focusUp('cam2')" onpointercancel="focusUp('cam2')" aria-label="Focus in">In</button>
             <button type="button" class="ghost focusManualBtn" id="cam2FocusOut" onpointerdown="focusDown('cam2','focus_out')" onpointerup="focusUp('cam2')" onpointercancel="focusUp('cam2')" aria-label="Focus out">Out</button>
           </div>
@@ -1625,7 +1644,7 @@
       </div>
 
       <div id="settingsTabPanelSwitcher" class="settingsTabPanel">
-        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Connect to your <b>OSEE GoStream Duet</b> switcher (GSP protocol, port <b>19010</b> by default). <b>Camera 1</b> is on <b>SDI 1</b>, <b>Camera 2</b> on <b>SDI 2</b>. CUT selects preview then takes it to program.</p>
+        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Connect to your <b>OSEE GoStream Duet</b> switcher (GSP protocol, port <b>19010</b> by default). <b>Camera 1</b> is on <b>SDI 1</b>, <b>Camera 2</b> on <b>SDI 2</b>. <b>CUT</b> is instant; <b>AUTO</b> is a mix fade to that camera.</p>
         <div id="switcherInfoDebug" class="small" style="margin-bottom:12px; padding:8px; background:#f1f5f9; border-radius:6px; color:#475569;"></div>
         <div class="obsSettingsRow">
           <label>Switcher IP address:</label>
@@ -1675,6 +1694,25 @@
       </div>
 
       <div id="settingsTabPanelGeneral" class="settingsTabPanel">
+        <div class="obsSettingsRow" style="align-items: center;">
+          <label>Debug log (troubleshooting)</label>
+          <div class="toggleWrap">
+            <div class="toggleSwitch on" id="debugLogToggle" role="button" tabindex="0" aria-pressed="true" title="Write timestamped session log" onclick="onDebugLogToggleClick()" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); onDebugLogToggleClick(); }"></div>
+          </div>
+        </div>
+        <div class="obsSettingsRow" style="align-items: center;">
+          <label>Verbose GoStream protocol</label>
+          <div class="toggleWrap">
+            <div class="toggleSwitch" id="debugLogGspToggle" role="button" tabindex="0" aria-pressed="false" title="Log every switcher TCP command" onclick="onDebugLogGspToggleClick()" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); onDebugLogGspToggleClick(); }"></div>
+          </div>
+        </div>
+        <div class="obsSettingsRow manualUpdateCheckRow">
+          <label>Debug log file</label>
+          <div style="display:flex; flex-direction:column; gap:8px; flex:1; min-width:0;">
+            <p id="debugLogPathLine" class="small" style="margin:0; color:#64748b; word-break:break-all;">—</p>
+            <button type="button" class="ghost" onclick="openLogsFolder()">Open logs folder</button>
+          </div>
+        </div>
         <div class="obsSettingsRow" style="align-items: center;">
           <label>Check for updates on startup</label>
           <div class="toggleWrap">
@@ -1764,6 +1802,8 @@
   let switcherConnected = false;
   let switcherBarBusy = false;
   let pollObsPending = false;
+  let pollOnlineIntervalId = null;
+  let pollObsIntervalId = null;
   let multisourceLayoutApplied = false;
   let appInitPromise = null;
   const STARTUP_STEP_SETTINGS_TAB = {
@@ -1773,13 +1813,55 @@
 
   function showStreamToast(msg, kind) {
     const el = document.getElementById("streamToastMsg");
-    if (!el) return;
-    el.textContent = msg || "";
-    el.className = "streamToastMsg visible" + (kind === "error" ? " error" : (kind === "ok" ? " ok" : ""));
+    if (!el || !msg) return;
+    el.textContent = msg;
+    const k = kind === "error" ? " error" : (kind === "warn" ? " warn" : (kind === "ok" ? " ok" : ""));
+    el.className = "streamToastMsg visible" + k;
     if (streamToastTimer) window.clearTimeout(streamToastTimer);
+    const ms = kind === "error" ? 4000 : (kind === "warn" ? 2200 : 2000);
     streamToastTimer = window.setTimeout(function () {
       el.classList.remove("visible");
-    }, kind === "error" ? 4500 : 2800);
+    }, ms);
+  }
+
+  function showStreamError(msg) {
+    showStreamToast(msg, "error");
+  }
+
+  function setLyricsUi(on) {
+    const live = !!on;
+    if (dom.usk1OnBtn) dom.usk1OnBtn.classList.toggle("on", live);
+    if (dom.usk1OffBtn) {
+      dom.usk1OffBtn.classList.remove("on");
+      dom.usk1OffBtn.classList.toggle("offActive", !live);
+    }
+  }
+
+  function setTitleUi(on) {
+    const live = !!on;
+    if (dom.dsk1OnBtn) dom.dsk1OnBtn.classList.toggle("on", live);
+    if (dom.dsk1OffBtn) {
+      dom.dsk1OffBtn.classList.remove("on");
+      dom.dsk1OffBtn.classList.toggle("offActive", !live);
+    }
+  }
+
+  function setSplitviewUi(on) {
+    const live = !!on;
+    if (dom.splitviewOnBtn) dom.splitviewOnBtn.classList.toggle("on", live);
+    if (dom.splitviewOffBtn) dom.splitviewOffBtn.classList.toggle("on", !live);
+  }
+
+  function setStreamLiveUi(live) {
+    const isLive = !!live;
+    const liveBtn = document.getElementById("streamGoLiveBtn");
+    const stopBtn = document.getElementById("streamStopBtn");
+    if (liveBtn) liveBtn.classList.toggle("on", isLive);
+    if (stopBtn) {
+      stopBtn.disabled = !switcherConnected || !isLive;
+      stopBtn.classList.toggle("on", isLive);
+      stopBtn.setAttribute("aria-disabled", stopBtn.disabled ? "true" : "false");
+    }
   }
 
   function markSettingsDirty(tab) {
@@ -2046,15 +2128,22 @@
     if (panel) panel.classList.toggle("trackingOn", on);
   }
 
+  function setFocusModeUi(cam, autoFocusOn) {
+    state[cam].focusOn = !!autoFocusOn;
+    updateFocusButtons(cam);
+  }
+
   function updateFocusButtons(cam) {
-    const onBtn = document.getElementById(cam + "FocusOn");
-    const offBtn = document.getElementById(cam + "FocusOff");
-    if (!onBtn || !offBtn) return;
-    const on = state[cam].focusOn === true;
-    onBtn.classList.toggle("primary", on);
-    onBtn.classList.toggle("ghost", !on);
-    offBtn.classList.toggle("primary", !on);
-    offBtn.classList.toggle("ghost", on);
+    const autoBtn = document.getElementById(cam + "FocusOn");
+    const manualBtn = document.getElementById(cam + "FocusOff");
+    if (!autoBtn || !manualBtn) return;
+    const auto = state[cam].focusOn === true;
+    autoBtn.classList.toggle("primary", auto);
+    autoBtn.classList.toggle("ghost", !auto);
+    manualBtn.classList.toggle("primary", !auto);
+    manualBtn.classList.toggle("ghost", auto);
+    autoBtn.setAttribute("aria-pressed", auto ? "true" : "false");
+    manualBtn.setAttribute("aria-pressed", auto ? "false" : "true");
   }
 
   async function ensureTrackingOff(cam) {
@@ -2113,24 +2202,28 @@
     status(cam, ok ? "Tracking OFF ✓" : ("Error: " + resp));
   }
 
-  async function focusOn(cam) {
-    status(cam, "Auto focus ON...");
+  async function focusAuto(cam) {
+    setFocusModeUi(cam, true);
+    status(cam, "Auto focus...");
     const [ok, resp] = await window.pywebview.api.focus_on(cam);
-    if (ok) {
-      state[cam].focusOn = true;
-      updateFocusButtons(cam);
+    if (!ok) {
+      await fetchFocusStatus(cam);
+      status(cam, "Error: " + resp);
+      return;
     }
-    status(cam, ok ? "Auto focus ON ✓" : ("Error: " + resp));
+    status(cam, "Auto focus ✓");
   }
 
-  async function focusOff(cam) {
-    status(cam, "Auto focus OFF...");
+  async function focusManual(cam) {
+    setFocusModeUi(cam, false);
+    status(cam, "Manual focus...");
     const [ok, resp] = await window.pywebview.api.focus_off(cam);
-    if (ok) {
-      state[cam].focusOn = false;
-      updateFocusButtons(cam);
+    if (!ok) {
+      await fetchFocusStatus(cam);
+      status(cam, "Error: " + resp);
+      return;
     }
-    status(cam, ok ? "Auto focus OFF ✓" : ("Error: " + resp));
+    status(cam, "Manual focus ✓");
   }
 
   async function presetRecall(cam, preset, label) {
@@ -2205,11 +2298,15 @@
   }
 
   async function focusDown(cam, direction) {
+    setFocusModeUi(cam, false);
     const { speed } = getSpeed(cam);
     const api = window.pywebview?.api;
     if (api?.focus_manual) {
       const [ok, resp] = await api.focus_manual(cam, direction, speed);
-      if (!ok) status(cam, "Focus: " + resp);
+      if (!ok) {
+        await fetchFocusStatus(cam);
+        status(cam, "Focus: " + resp);
+      }
       return;
     }
     const [ok, resp] = await api.ptz_move(cam, direction, speed);
@@ -2255,12 +2352,14 @@
   // -------- OBS Status & Control --------
   function updateCameraCutUi(cam) {
     const cutBtn = dom[cam + "CutBtn"];
+    const autoBtn = dom[cam + "AutoBtn"];
     const connectingEl = dom[cam + "ObsConnecting"];
     const connectedEl = dom[cam + "ObsConnected"];
     const camOnline = !!cameraWasOnline[cam];
     if (connectingEl) connectingEl.style.display = camOnline ? "none" : "inline-flex";
     if (connectedEl) connectedEl.style.display = "none";
     if (cutBtn) cutBtn.disabled = !switcherConnected;
+    if (autoBtn) autoBtn.disabled = !switcherConnected;
   }
 
   function updateObsBar(cam, obsStatus) {
@@ -2321,7 +2420,7 @@
         updateCameraCutUi("cam2");
         updateStreamControls(obsStatus);
         const streamPanel = document.getElementById("settingsTabPanelStream");
-        if (streamPanel && streamPanel.classList.contains("active")) refreshStreamStatus();
+        if (streamPanel && streamPanel.classList.contains("active")) refreshStreamStatus(obsStatus);
       } else {
         switcherConnected = false;
         switcherWasConnected = false;
@@ -2343,15 +2442,13 @@
     }
   }
 
-  async function runSwitcherBarAction(fn) {
-    if (switcherBarBusy) {
-      showStreamToast("Please wait…", "warn");
-      return;
-    }
+  async function runSwitcherBarAction(optimisticFn, apiFn) {
+    if (switcherBarBusy) return;
     if (!requireSwitcherConnected()) return;
+    if (typeof optimisticFn === "function") optimisticFn();
     switcherBarBusy = true;
     try {
-      await fn();
+      await apiFn();
     } finally {
       switcherBarBusy = false;
     }
@@ -2373,10 +2470,8 @@
           if (window.pywebview?.api?.focus_on) {
             await window.pywebview.api.focus_on("cam1").catch(function() {});
             await window.pywebview.api.focus_on("cam2").catch(function() {});
-            state.cam1.focusOn = true;
-            state.cam2.focusOn = true;
-            updateFocusButtons("cam1");
-            updateFocusButtons("cam2");
+            setFocusModeUi("cam1", true);
+            setFocusModeUi("cam2", true);
           }
           if (window.pywebview?.api?.tracking_off) {
             await window.pywebview.api.tracking_off("cam1").catch(function() {});
@@ -2527,23 +2622,25 @@
   }
 
   async function streamGoLive() {
-    await runSwitcherBarAction(async function () {
-      try {
-        const api = window.pywebview?.api;
-        if (!api?.switcher_stream_go_live) return;
-        const [ok, resp] = await api.switcher_stream_go_live();
-        showStreamToast(ok ? "Go Live ✓" : ("Error: " + resp), ok ? "ok" : "error");
-        if (ok) {
-          if (window.pywebview?.api?.obs_get_status) {
-            const [stOk, st] = await api.obs_get_status();
-            if (stOk && st) updateStreamControls(Object.assign({}, st, { streamLive: true }));
+    await runSwitcherBarAction(
+      function () { setStreamLiveUi(true); },
+      async function () {
+        try {
+          const api = window.pywebview?.api;
+          if (!api?.switcher_stream_go_live) return;
+          const [ok, resp] = await api.switcher_stream_go_live();
+          if (!ok) {
+            showStreamError("Go Live: " + resp);
+            pollObsStatus();
+            return;
           }
-          setTimeout(pollObsStatus, 400);
+          pollObsStatus();
+        } catch (e) {
+          showStreamError("Go Live: " + e);
+          pollObsStatus();
         }
-      } catch (e) {
-        showStreamToast("Go Live error: " + e, "error");
       }
-    });
+    );
   }
 
   let streamStopConfirmOpen = false;
@@ -2579,111 +2676,151 @@
 
   function requireSwitcherConnected() {
     if (!switcherConnected) {
-      showStreamToast("Switcher not connected", "error");
+      showStreamError("Switcher not connected");
       return false;
     }
     return true;
   }
 
   async function streamStop() {
-    await runSwitcherBarAction(async function () {
-      try {
-        const api = window.pywebview?.api;
-        if (!api?.switcher_stream_stop) return;
-        const [ok, resp] = await api.switcher_stream_stop();
-        showStreamToast(ok ? "Stream stopped ✓" : ("Error: " + resp), ok ? "ok" : "error");
-        if (ok) setTimeout(pollObsStatus, 300);
-      } catch (e) {
-        showStreamToast("Stop error: " + e, "error");
+    await runSwitcherBarAction(
+      function () { setStreamLiveUi(false); },
+      async function () {
+        try {
+          const api = window.pywebview?.api;
+          if (!api?.switcher_stream_stop) return;
+          const [ok, resp] = await api.switcher_stream_stop();
+          if (!ok) showStreamError("Stop: " + resp);
+          pollObsStatus();
+        } catch (e) {
+          showStreamError("Stop: " + e);
+          pollObsStatus();
+        }
       }
-    });
+    );
   }
 
   async function usk1On() {
-    await runSwitcherBarAction(async function () {
-      try {
-        const api = window.pywebview?.api;
-        if (!api?.switcher_usk1_on) return;
-        const [ok, resp] = await api.switcher_usk1_on();
-        showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
-        if (ok) setTimeout(pollObsStatus, 300);
-      } catch (e) { showStreamToast("Lyrics error: " + e, "error"); }
-    });
+    await runSwitcherBarAction(
+      function () { setLyricsUi(true); },
+      async function () {
+        try {
+          const api = window.pywebview?.api;
+          if (!api?.switcher_usk1_on) return;
+          const [ok, resp] = await api.switcher_usk1_on();
+          if (!ok) showStreamError("Lyrics: " + resp);
+          pollObsStatus();
+        } catch (e) {
+          showStreamError("Lyrics: " + e);
+          pollObsStatus();
+        }
+      }
+    );
   }
   async function usk1Off() {
-    await runSwitcherBarAction(async function () {
-      try {
-        const api = window.pywebview?.api;
-        if (!api?.switcher_usk1_off) return;
-        const [ok, resp] = await api.switcher_usk1_off();
-        showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
-        if (ok) setTimeout(pollObsStatus, 300);
-      } catch (e) { showStreamToast("Lyrics error: " + e, "error"); }
-    });
+    await runSwitcherBarAction(
+      function () { setLyricsUi(false); },
+      async function () {
+        try {
+          const api = window.pywebview?.api;
+          if (!api?.switcher_usk1_off) return;
+          const [ok, resp] = await api.switcher_usk1_off();
+          if (!ok) showStreamError("Lyrics: " + resp);
+          pollObsStatus();
+        } catch (e) {
+          showStreamError("Lyrics: " + e);
+          pollObsStatus();
+        }
+      }
+    );
   }
   async function dsk1On() {
-    await runSwitcherBarAction(async function () {
-      try {
-        const api = window.pywebview?.api;
-        if (!api?.switcher_dsk1_on) return;
-        const [ok, resp] = await api.switcher_dsk1_on();
-        showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
-        if (ok) setTimeout(pollObsStatus, 300);
-      } catch (e) { showStreamToast("Title error: " + e, "error"); }
-    });
+    await runSwitcherBarAction(
+      function () { setTitleUi(true); },
+      async function () {
+        try {
+          const api = window.pywebview?.api;
+          if (!api?.switcher_dsk1_on) return;
+          const [ok, resp] = await api.switcher_dsk1_on();
+          if (!ok) showStreamError("Title: " + resp);
+          pollObsStatus();
+        } catch (e) {
+          showStreamError("Title: " + e);
+          pollObsStatus();
+        }
+      }
+    );
   }
   async function dsk1Off() {
-    await runSwitcherBarAction(async function () {
-      try {
-        const api = window.pywebview?.api;
-        if (!api?.switcher_dsk1_off) return;
-        const [ok, resp] = await api.switcher_dsk1_off();
-        showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
-        if (ok) setTimeout(pollObsStatus, 300);
-      } catch (e) { showStreamToast("Title error: " + e, "error"); }
-    });
+    await runSwitcherBarAction(
+      function () { setTitleUi(false); },
+      async function () {
+        try {
+          const api = window.pywebview?.api;
+          if (!api?.switcher_dsk1_off) return;
+          const [ok, resp] = await api.switcher_dsk1_off();
+          if (!ok) showStreamError("Title: " + resp);
+          pollObsStatus();
+        } catch (e) {
+          showStreamError("Title: " + e);
+          pollObsStatus();
+        }
+      }
+    );
   }
 
   async function splitviewOn() {
-    await runSwitcherBarAction(async function () {
-      try {
-        const api = window.pywebview?.api;
-        if (!api?.switcher_splitview_on) return;
-        const [ok, resp] = await api.switcher_splitview_on();
-        showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
-        if (ok) setTimeout(pollObsStatus, 400);
-      } catch (e) {
-        showStreamToast("Splitview error: " + e, "error");
+    await runSwitcherBarAction(
+      function () { setSplitviewUi(true); },
+      async function () {
+        try {
+          const api = window.pywebview?.api;
+          if (!api?.switcher_splitview_on) return;
+          const [ok, resp] = await api.switcher_splitview_on();
+          if (!ok) showStreamError("Splitview: " + resp);
+          pollObsStatus();
+        } catch (e) {
+          showStreamError("Splitview: " + e);
+          pollObsStatus();
+        }
       }
-    });
+    );
   }
 
   async function splitviewOff() {
-    await runSwitcherBarAction(async function () {
-      try {
-        const api = window.pywebview?.api;
-        if (!api?.switcher_splitview_off) return;
-        const [ok, resp] = await api.switcher_splitview_off();
-        showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
-        if (ok) setTimeout(pollObsStatus, 400);
-      } catch (e) {
-        showStreamToast("Splitview error: " + e, "error");
+    await runSwitcherBarAction(
+      function () { setSplitviewUi(false); },
+      async function () {
+        try {
+          const api = window.pywebview?.api;
+          if (!api?.switcher_splitview_off) return;
+          const [ok, resp] = await api.switcher_splitview_off();
+          if (!ok) showStreamError("Splitview: " + resp);
+          pollObsStatus();
+        } catch (e) {
+          showStreamError("Splitview: " + e);
+          pollObsStatus();
+        }
       }
-    });
+    );
   }
 
   async function activateStill(stillIndex) {
-    await runSwitcherBarAction(async function () {
-      try {
-        const api = window.pywebview?.api;
-        if (!api?.switcher_activate_still) return;
-        const [ok, resp] = await api.switcher_activate_still(stillIndex);
-        showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
-        if (ok) updateStillButtons(stillIndex);
-      } catch (e) {
-        showStreamToast("Still error: " + e, "error");
+    await runSwitcherBarAction(
+      function () { updateStillButtons(stillIndex); },
+      async function () {
+        try {
+          const api = window.pywebview?.api;
+          if (!api?.switcher_activate_still) return;
+          const [ok, resp] = await api.switcher_activate_still(stillIndex);
+          if (!ok) showStreamError("Still: " + resp);
+          pollObsStatus();
+        } catch (e) {
+          showStreamError("Still: " + e);
+          pollObsStatus();
+        }
       }
-    });
+    );
   }
 
   async function loadStreamSettings() {
@@ -2726,6 +2863,23 @@
       setTimeout(pollObsStatus, 300);
     } catch (e) {
       status(cam, "Cut error: " + e);
+    }
+  }
+
+  async function obsFade(cam) {
+    try {
+      if (!switcherConnected) {
+        showStreamToast("Switcher not connected", "error");
+        return;
+      }
+      if (!window.pywebview?.api?.obs_fade) return;
+      status(cam, "Fading to camera...");
+      const [ok, resp] = await window.pywebview.api.obs_fade(cam);
+      status(cam, ok ? "Fade successful ✓" : ("Fade error: " + resp));
+      if (ok) applyLock(cam);
+      setTimeout(pollObsStatus, 400);
+    } catch (e) {
+      status(cam, "Fade error: " + e);
     }
   }
 
@@ -3245,8 +3399,108 @@
         if ("settings_last_tab" in prefs) {
           state.obsConfig.settings_last_tab = normalizeSettingsTab(prefs.settings_last_tab);
         }
+        if ("update_check_enabled" in prefs) {
+          state.obsConfig.update_check_enabled = !!prefs.update_check_enabled;
+        }
+        if ("debug_log_enabled" in prefs) {
+          state.obsConfig.debug_log_enabled = !!prefs.debug_log_enabled;
+        }
+        if ("debug_log_verbose_gostream" in prefs) {
+          state.obsConfig.debug_log_verbose_gostream = !!prefs.debug_log_verbose_gostream;
+        }
       }
     } catch (e) {}
+  }
+
+  function refreshDebugLogUi() {
+    const pathEl = document.getElementById("debugLogPathLine");
+    const logToggle = document.getElementById("debugLogToggle");
+    const gspToggle = document.getElementById("debugLogGspToggle");
+    const cfg = state.obsConfig || {};
+    const logOn = cfg.debug_log_enabled !== false;
+    const gspOn = !!cfg.debug_log_verbose_gostream;
+    if (logToggle) {
+      logToggle.classList.toggle("on", logOn);
+      logToggle.setAttribute("aria-pressed", logOn ? "true" : "false");
+    }
+    if (gspToggle) {
+      gspToggle.classList.toggle("on", gspOn);
+      gspToggle.setAttribute("aria-pressed", gspOn ? "true" : "false");
+    }
+    if (pathEl && window.pywebview?.api?.log_get_info) {
+      window.pywebview.api.log_get_info().then(function (res) {
+        const ok = res && res[0];
+        const info = res && res[1];
+        if (ok && info && info.session_path) {
+          pathEl.textContent = info.session_path;
+        } else if (ok && info && info.log_dir) {
+          pathEl.textContent = info.log_dir;
+        }
+      }).catch(function () {});
+    }
+  }
+
+  async function onDebugLogToggleClick() {
+    const el = document.getElementById("debugLogToggle");
+    if (!el) return;
+    const on = !el.classList.contains("on");
+    el.classList.toggle("on", on);
+    el.setAttribute("aria-pressed", on ? "true" : "false");
+    if (state.obsConfig) state.obsConfig.debug_log_enabled = on;
+    await persistUiPrefs({ debug_log_enabled: on });
+    refreshDebugLogUi();
+  }
+
+  async function onDebugLogGspToggleClick() {
+    const el = document.getElementById("debugLogGspToggle");
+    if (!el) return;
+    const on = !el.classList.contains("on");
+    el.classList.toggle("on", on);
+    el.setAttribute("aria-pressed", on ? "true" : "false");
+    if (state.obsConfig) state.obsConfig.debug_log_verbose_gostream = on;
+    await persistUiPrefs({ debug_log_verbose_gostream: on });
+  }
+
+  async function openLogsFolder() {
+    try {
+      if (!window.pywebview?.api?.open_logs_folder) return;
+      await window.pywebview.api.open_logs_folder();
+    } catch (e) {}
+  }
+
+  function initUserActionLog() {
+    function send(action, target, detail) {
+      if (!window.pywebview?.api?.log_user_event) return;
+      try {
+        window.pywebview.api.log_user_event(action, target || "", detail || null);
+      } catch (e) {}
+    }
+    document.addEventListener("click", function (e) {
+      const btn = e.target && e.target.closest ? e.target.closest("button") : null;
+      if (!btn || btn.disabled) return;
+      const id = btn.id || "";
+      const label = (btn.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80);
+      send("click", id || label, {
+        label: label,
+        className: btn.className || "",
+        panel: btn.closest(".streamBar") ? "streamBar" : (btn.closest(".panel") ? "cameraPanel" : "")
+      });
+    }, true);
+    document.addEventListener("change", function (e) {
+      const el = e.target;
+      if (!el || !el.id) return;
+      if (el.tagName === "SELECT" || el.type === "range") {
+        send("change", el.id, { value: el.value });
+      }
+    }, true);
+    document.addEventListener("keydown", function (e) {
+      if (e.repeat) return;
+      const key = e.key || "";
+      if (key.length !== 1 && !/^(Enter|Escape|F\d+)$/.test(key)) return;
+      if (e.ctrlKey || e.altKey || e.metaKey) {
+        send("keydown", key, { ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey });
+      }
+    }, true);
   }
 
 
@@ -3323,19 +3577,23 @@
     }
   }
 
-  async function refreshStreamStatus() {
+  async function refreshStreamStatus(cachedStatus) {
     const el = document.getElementById("streamStatusPanel");
     if (!el) return;
     try {
-      const api = window.pywebview?.api;
-      if (!api?.obs_get_status) {
-        el.textContent = "Status unavailable until the app finishes loading.";
-        return;
-      }
-      const [ok, st] = await api.obs_get_status();
-      if (!ok || !st) {
-        el.textContent = "Could not read switcher status.";
-        return;
+      let st = cachedStatus;
+      if (!st) {
+        const api = window.pywebview?.api;
+        if (!api?.obs_get_status) {
+          el.textContent = "Status unavailable until the app finishes loading.";
+          return;
+        }
+        const [ok, fetched] = await api.obs_get_status();
+        if (!ok || !fetched) {
+          el.textContent = "Could not read switcher status.";
+          return;
+        }
+        st = fetched;
       }
       updateStreamBarStatus(st);
       updateTestStream2Ui(st);
@@ -3595,6 +3853,7 @@
     persistUiPrefs({ settings_last_tab: tabName });
     if (tabName === "stream") { loadStreamSettings(); refreshStreamStatus(); }
     if (tabName === "midi") { loadMidiSettings(); }
+    if (tabName === "general") { refreshDebugLogUi(); }
   }
 
 
@@ -3648,6 +3907,15 @@
   }
 
   async function windowClose() {
+    if (pollOnlineIntervalId) {
+      clearInterval(pollOnlineIntervalId);
+      pollOnlineIntervalId = null;
+    }
+    if (pollObsIntervalId) {
+      clearInterval(pollObsIntervalId);
+      pollObsIntervalId = null;
+    }
+    stopMidiLearnPoll();
     try { await window.pywebview?.api?.window_close(); } catch (e) {}
   }
 
@@ -3774,6 +4042,7 @@
           updateToggle.classList.toggle("on", updateOn);
           updateToggle.setAttribute("aria-pressed", updateOn ? "true" : "false");
         }
+        refreshDebugLogUi();
       }
     } catch (e) {}
   }
@@ -3867,7 +4136,7 @@
     // Cache DOM refs used in hot paths and settings
     const ids = ["cam1Dot","cam2Dot","cam1Panel","cam2Panel","cam1Presets","cam2Presets",
       "cam1Speed","cam2Speed","cam1SpeedPct","cam2SpeedPct","cam1ObsBar","cam2ObsBar","cam1ObsLabel","cam2ObsLabel",
-      "cam1CutBtn","cam2CutBtn","cam1ObsConnecting","cam2ObsConnecting","cam1ObsConnected","cam2ObsConnected","cam1Ip","cam2Ip","cam1Title","cam2Title",
+      "cam1CutBtn","cam2CutBtn","cam1AutoBtn","cam2AutoBtn","cam1ObsConnecting","cam2ObsConnecting","cam1ObsConnected","cam2ObsConnected","cam1Ip","cam2Ip","cam1Title","cam2Title",
       "obsSettings","switcherInfoDebug","obsHost","obsPort","settingsCam1Ip","settingsCam2Ip",
       "settingsPresetCount","settingsPresetCountValue","settingsVersion","obsHoldTime","obsHoldTimeValue","obsSimpleModeToggle",
       "usk1OnBtn","usk1OffBtn","dsk1OnBtn","dsk1OffBtn","stillSidBtn","stillNateBtn","stillCecilBtn",
@@ -3911,7 +4180,7 @@
 
     pollOnline("cam1");
     pollOnline("cam2");
-    setInterval(function () { pollOnline("cam1"); pollOnline("cam2"); }, 3000);
+    pollOnlineIntervalId = setInterval(function () { pollOnline("cam1"); pollOnline("cam2"); }, 3000);
 
     settingsLoadSilent = true;
     await loadObsConfig();
@@ -3929,7 +4198,7 @@
     setSwitcherBarConnected(false);
     updateStreamControls({ connected: false });
     pollObsStatus();
-    setInterval(pollObsStatus, 300);
+    pollObsIntervalId = setInterval(pollObsStatus, 300);
     loadCameraPreviews();
     wireSettingsDirtyListeners();
     } catch (e) {
@@ -3943,15 +4212,18 @@
 
   // Run init only after pywebview API is ready so get_preset_count (and other API calls) succeed on startup
   function runInit() {
-    if (window.pywebview?.api) {
+    function boot() {
+      initUserActionLog();
       runPostStartupUi();
       setupGlobalShortcuts();
+    }
+    if (window.pywebview?.api) {
+      boot();
       return;
     }
     window.addEventListener("pywebviewready", function once() {
       window.removeEventListener("pywebviewready", once);
-      runPostStartupUi();
-      setupGlobalShortcuts();
+      boot();
     });
   }
 

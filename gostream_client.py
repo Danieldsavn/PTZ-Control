@@ -292,14 +292,25 @@ class GoStreamClient:
         if value is not None:
             obj["value"] = value if isinstance(value, list) else [value]
         payload = pack_packet(json.dumps(obj, separators=(",", ":")).encode("utf-8"))
+        try:
+            import app_log
+
+            app_log.gsp(f"{cmd_type} {cmd_id}", value)
+        except ImportError:
+            pass
+        need_disconnect = False
         with self._lock:
+            if not self._sock or not self._connected:
+                return False
             try:
                 self._sock.sendall(payload)
                 return True
             except OSError:
                 self._connected = False
-                self.disconnect()
-                return False
+                need_disconnect = True
+        if need_disconnect:
+            self.disconnect()
+        return False
 
     def send_get(self, cmd_id: str, value: Optional[list] = None) -> bool:
         return self._send_command(cmd_id, "get", value)
@@ -346,7 +357,7 @@ class GoStreamClient:
         enable: bool,
         *,
         dsk: bool = False,
-        rate_seconds: float = 2.0,
+        rate_seconds: float = 1.0,
     ) -> bool:
         """Take USK/DSK on or off using mix transition (fade) when possible."""
         kid = int(key_id)
@@ -490,10 +501,10 @@ class GoStreamClient:
         """Background Still 2, window 1 = HDMI 3, window 2 = live camera SDI."""
         if not self.set_multisource_fill_source(MULTISOURCE_BACKGROUND_FILL):
             return False
-        time.sleep(0.05)
+        time.sleep(0.03)
         if not self.set_multisource_window_source(MULTISOURCE_WINDOW_1_ID, SOURCE_IN3):
             return False
-        time.sleep(0.05)
+        time.sleep(0.03)
         return self.set_multisource_window_source(
             MULTISOURCE_WINDOW_2_ID, int(window2_source_id)
         )
@@ -504,27 +515,29 @@ class GoStreamClient:
     def auto_transition(self) -> bool:
         return self._send_command(CMD_AUTO_TRANSITION, "set")
 
-    def fade_to_source(self, source_id: int) -> bool:
-        """Mix transition: preview selected source, then AUTO to program."""
+    def fade_to_source(self, source_id: int, rate_seconds: float = 1.0) -> bool:
+        """Mix transition: set rate, preview selected source, then AUTO to program."""
         if not self.set_transition_style_mix():
             return False
+        self.set_transition_mix_rate(rate_seconds)
+        time.sleep(0.04)
         if not self.set_preview_input(int(source_id)):
             return False
-        time.sleep(0.08)
+        time.sleep(0.04)
         return self.auto_transition()
 
-    def splitview_on(self, window2_source_id: int) -> bool:
+    def splitview_on(self, window2_source_id: int, rate_seconds: float = 1.0) -> bool:
         if not self.configure_multisource_layout(window2_source_id):
             return False
-        time.sleep(0.05)
+        time.sleep(0.03)
         if not self.set_multisource_enable(True):
             return False
-        time.sleep(0.05)
-        return self.fade_to_source(SOURCE_MULTI)
+        time.sleep(0.03)
+        return self.fade_to_source(SOURCE_MULTI, rate_seconds=rate_seconds)
 
-    def splitview_off(self, target_source_id: int) -> bool:
+    def splitview_off(self, target_source_id: int, rate_seconds: float = 1.0) -> bool:
         """Fade program back to camera/background input; leave multisource layout intact."""
-        return self.fade_to_source(int(target_source_id))
+        return self.fade_to_source(int(target_source_id), rate_seconds=rate_seconds)
 
     def _sync_bus_state(self) -> None:
         self.send_get(CMD_PGM_INDEX)

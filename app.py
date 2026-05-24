@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 
@@ -76,6 +77,7 @@ from preview_server import (
     ffmpeg_available,
     invalidate_preview,
     preview_url,
+    shutdown_preview_server,
     start_preview_server,
     stop_all_previews,
 )
@@ -94,6 +96,7 @@ from update_checker import (
     running_exe_path,
     write_update_job,
 )
+import app_log
 
 # ---- Camera config ----
 CAMERAS = {
@@ -229,14 +232,20 @@ def _visca_send_udp(cam_key: str, payload: bytes):
     port = CAMERAS.get(cam_key, {}).get("visca_port", 52381)
     packet = _visca_wrap(cam_key, payload)
 
+    s = None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(VISCA_TIMEOUT)
         s.sendto(packet, (ip, port))
-        s.close()
         return True, "UDP: sent"
     except Exception as e:
         return False, f"VISCA UDP error: {e}"
+    finally:
+        if s:
+            try:
+                s.close()
+            except OSError:
+                pass
 
 
 # ---------------- VISCA payload builders ----------------
@@ -324,6 +333,12 @@ def _visca_focus(direction: str, speed: int):
         raise ValueError(f"Unknown focus direction: {direction}")
 
     return bytes([0x81, 0x01, 0x04, 0x08, z, 0xFF])
+
+
+def _visca_autofocus(on: bool) -> bytes:
+    """VISCA AF mode: 04 38 02 = auto on, 04 38 03 = manual."""
+    mode = 0x02 if on else 0x03
+    return bytes([0x81, 0x01, 0x04, 0x38, mode, 0xFF])
 
 
 def _visca_preset_recall(preset: int):
@@ -484,11 +499,23 @@ def _default_switcher_config():
         "usk1_key_source": 4,
         "dsk1_fill_source": DSK_FILL_STILL_1,
         "keys_use_mix_fade": True,
-        "key_mix_rate_seconds": 2.0,
+        "key_mix_rate_seconds": 1.0,
+        "camera_mix_rate_seconds": 1.0,
+        "splitview_mix_rate_seconds": 1.0,
         "midi": normalize_midi_config({}),
         "update_check_enabled": True,
         "update_manifest_url": DEFAULT_MANIFEST_URL,
+        "debug_log_enabled": True,
+        "debug_log_verbose_gostream": False,
     }
+
+
+def _apply_log_settings_from_config(cfg: dict | None) -> None:
+    data = cfg if isinstance(cfg, dict) else {}
+    app_log.configure(
+        enabled=bool(data.get("debug_log_enabled", True)),
+        verbose_gostream=bool(data.get("debug_log_verbose_gostream", False)),
+    )
 
 
 def _migrate_legacy_obs_config(data: dict) -> dict:
@@ -552,6 +579,19 @@ def _load_switcher_config():
                     data["update_check_enabled"] = base["update_check_enabled"]
                 if not (data.get("update_manifest_url") or "").strip():
                     data["update_manifest_url"] = base["update_manifest_url"]
+                if "debug_log_enabled" not in data:
+                    data["debug_log_enabled"] = base["debug_log_enabled"]
+                if "debug_log_verbose_gostream" not in data:
+                    data["debug_log_verbose_gostream"] = base[
+                        "debug_log_verbose_gostream"
+                    ]
+                if "camera_mix_rate_seconds" not in data:
+                    legacy_rate = float(data.get("key_mix_rate_seconds", 1.0))
+                    half = max(0.5, legacy_rate / 2.0)
+                    data["camera_mix_rate_seconds"] = half
+                    data["splitview_mix_rate_seconds"] = half
+                    if legacy_rate == 2.0:
+                        data["key_mix_rate_seconds"] = 1.0
                 return data
         if os.path.exists(OBS_CONFIG_FILE):
             with open(OBS_CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -746,6 +786,7 @@ class SwitcherManager:
         self._poll_thread.start()
 
     def _mark_disconnected(self) -> None:
+        app_log.switcher("Disconnected from switcher")
         with self._lock:
             self._connected = False
             self._status_cache["connected"] = False
@@ -820,12 +861,15 @@ class SwitcherManager:
     def _try_connect(self) -> bool:
         if not self._host_configured():
             return False
+        host = (self._config.get("host") or "").strip()
+        try:
+            port = int(self._config.get("port", GOSTREAM_DEFAULT_PORT))
+        except (TypeError, ValueError):
+            return False
         with self._conn_lock:
             if self._connected and self._client.connected:
                 return True
-            host = (self._config.get("host") or "").strip()
             try:
-                port = int(self._config.get("port", GOSTREAM_DEFAULT_PORT))
                 with self._lock:
                     self._connected = False
                     self._status_cache["connected"] = False
@@ -834,26 +878,31 @@ class SwitcherManager:
                 with self._lock:
                     self._connected = True
                     self._status_cache["connected"] = True
-                self._refresh_status_cache()
-                try:
-                    self.configure_multisource_layout()
-                except Exception:
-                    pass
-                try:
-                    self.apply_usk1_defaults()
-                except Exception:
-                    pass
-                try:
-                    self.apply_dsk1_defaults()
-                except Exception:
-                    pass
-                return True
-            except (ConnectionRefusedError, OSError, socket.timeout, Exception):
+            except (ConnectionRefusedError, OSError, socket.timeout, Exception) as e:
+                app_log.switcher(
+                    "Connect failed",
+                    {"host": host, "error": str(e)},
+                )
                 with self._lock:
                     self._connected = False
                     self._status_cache["connected"] = False
                 self._client.disconnect()
                 return False
+        self._refresh_status_cache()
+        try:
+            self.configure_multisource_layout()
+        except Exception:
+            pass
+        try:
+            self.apply_usk1_defaults()
+        except Exception:
+            pass
+        try:
+            self.apply_dsk1_defaults()
+        except Exception:
+            pass
+        app_log.switcher("Connected", {"host": host, "port": port})
+        return True
 
     def _reconnect(self):
         self._last_reconnect_attempt = 0.0
@@ -921,13 +970,13 @@ class SwitcherManager:
             pass
 
     def wait_for_connected(self, timeout_s: float = 3.0) -> bool:
+        self._kick_reconnect()
         deadline = time.monotonic() + max(0.1, float(timeout_s))
         while time.monotonic() < deadline:
             if self._connected and self._client.connected:
                 return True
             if not self._host_configured():
                 return False
-            self._try_connect()
             time.sleep(0.25)
         return bool(self._connected and self._client.connected)
 
@@ -950,7 +999,14 @@ class SwitcherManager:
                     self._config["settings_last_tab"] = tab
             if "update_check_enabled" in prefs:
                 self._config["update_check_enabled"] = bool(prefs["update_check_enabled"])
+            if "debug_log_enabled" in prefs:
+                self._config["debug_log_enabled"] = bool(prefs["debug_log_enabled"])
+            if "debug_log_verbose_gostream" in prefs:
+                self._config["debug_log_verbose_gostream"] = bool(
+                    prefs["debug_log_verbose_gostream"]
+                )
             _save_switcher_config(self._config)
+        _apply_log_settings_from_config(self._config)
 
     def _poll_status(self):
         while not self._stop_polling:
@@ -1000,7 +1056,11 @@ class SwitcherManager:
                     time.sleep(0.06)
                     self._refresh_status_cache()
                     self._verify_usk1_defaults()
-            except Exception:
+            except Exception as e:
+                try:
+                    app_log.switcher("Poll error", {"error": str(e)})
+                except Exception:
+                    pass
                 self._mark_disconnected()
                 self._poll_failures = 0
             time.sleep(0.25)
@@ -1063,9 +1123,10 @@ class SwitcherManager:
             return False
         time.sleep(0.08)
         target = self._background_camera_sdi()
-        if not self._client.fade_to_source(target):
+        rate = float(self._config.get("camera_mix_rate_seconds", 1.0))
+        if not self._client.fade_to_source(target, rate_seconds=rate):
             return False
-        time.sleep(0.12)
+        time.sleep(max(0.06, rate * 0.12))
         self._client.send_get("pgmIndex")
         self._client.send_get("pvwIndex")
         self._client.request_stream_ui_state()
@@ -1094,11 +1155,12 @@ class SwitcherManager:
                 self._god_bless_active = False
                 return False, "Failed to select God Bless still on media player 1"
             time.sleep(0.08)
-            if not self._client.fade_to_source(SOURCE_MP):
+            rate = float(self._config.get("camera_mix_rate_seconds", 1.0))
+            if not self._client.fade_to_source(SOURCE_MP, rate_seconds=rate):
                 self._god_bless_active = False
                 self._apply_mp1_still(saved)
                 return False, "Failed to fade to God Bless Screen"
-            time.sleep(0.15)
+            time.sleep(max(0.08, rate * 0.12))
             self._client.send_get("pgmIndex")
             self._client.send_get("pvwIndex")
             self._client.request_stream_ui_state()
@@ -1261,7 +1323,7 @@ class SwitcherManager:
                 self.exit_god_bless_if_active()
                 time.sleep(0.12)
             use_fade = bool(self._config.get("keys_use_mix_fade", True))
-            rate = float(self._config.get("key_mix_rate_seconds", 2.0))
+            rate = float(self._config.get("key_mix_rate_seconds", 1.0))
             if use_fade:
                 ok = self._client.set_key_on_air_faded(
                     USK_1_KEY_ID, on, dsk=False, rate_seconds=rate
@@ -1287,7 +1349,7 @@ class SwitcherManager:
                     return False, "Failed to leave God Bless Screen"
                 time.sleep(0.12)
             use_fade = bool(self._config.get("keys_use_mix_fade", True))
-            rate = float(self._config.get("key_mix_rate_seconds", 2.0))
+            rate = float(self._config.get("key_mix_rate_seconds", 1.0))
             if use_fade:
                 ok = self._client.set_key_on_air_faded(
                     DSK_1_KEY_ID, on, dsk=True, rate_seconds=rate
@@ -1378,9 +1440,10 @@ class SwitcherManager:
         try:
             self.exit_god_bless_if_active()
             window2 = self._sdi_for_cam(self._last_live_cam or "cam1")
-            if not self._client.splitview_on(window2):
+            sv_rate = float(self._config.get("splitview_mix_rate_seconds", 1.0))
+            if not self._client.splitview_on(window2, rate_seconds=sv_rate):
                 return False, "Failed to fade to Multisource"
-            time.sleep(0.15)
+            time.sleep(max(0.08, sv_rate * 0.12))
             self._client.send_get("pgmIndex")
             self._client.send_get("pvwIndex")
             self._client.send_get(
@@ -1408,9 +1471,10 @@ class SwitcherManager:
         try:
             self.exit_god_bless_if_active()
             target = self._background_camera_sdi()
-            if not self._client.splitview_off(target):
+            sv_rate = float(self._config.get("splitview_mix_rate_seconds", 1.0))
+            if not self._client.splitview_off(target, rate_seconds=sv_rate):
                 return False, "Failed to fade back to camera"
-            time.sleep(0.15)
+            time.sleep(max(0.08, sv_rate * 0.12))
             self._client.send_get("pgmIndex")
             self._client.send_get("pvwIndex")
             self._refresh_status_cache()
@@ -1448,11 +1512,42 @@ class SwitcherManager:
         except Exception as e:
             return False, f"Cut error: {e}"
 
+    def fade_camera(self, cam_key):
+        if not self._ensure_connected():
+            return False, "Switcher not connected (reconnecting…)"
+
+        source_id = self._sdi_for_cam(cam_key)
+        rate = float(self._config.get("camera_mix_rate_seconds", 1.0))
+        try:
+            self.exit_god_bless_if_active()
+            self._last_live_cam = cam_key
+            ok_layout, _ = self.configure_multisource_layout(cam_key)
+            if not ok_layout:
+                return False, "Failed to update multisource layout"
+            if not self._client.fade_to_source(source_id, rate_seconds=rate):
+                return False, "Failed to fade to camera"
+            time.sleep(max(0.08, rate * 0.12))
+            self._client.send_get("pgmIndex")
+            self._client.send_get("pvwIndex")
+            if self._client.pgm_src == SOURCE_MULTI:
+                self._client.send_get(
+                    "multiSourceWindowSource", [MULTISOURCE_WINDOW_1_ID]
+                )
+                self._client.send_get(
+                    "multiSourceWindowSource", [MULTISOURCE_WINDOW_2_ID]
+                )
+            self._refresh_status_cache()
+            return True, "Fade successful"
+        except Exception as e:
+            return False, f"Fade error: {e}"
+
     def shutdown(self):
         self._stop_polling = True
         if self._poll_thread:
             self._poll_thread.join(timeout=1.0)
-        self._client.disconnect()
+            self._poll_thread = None
+        with self._conn_lock:
+            self._client.disconnect()
 
 
 _switcher_manager = None
@@ -1476,6 +1571,7 @@ def _save_midi_config_section(midi_cfg: dict) -> None:
 
 
 def _midi_trigger_scene(scene_id: str) -> None:
+    app_log.midi("Trigger scene", {"scene": scene_id})
     sm = _get_switcher_manager()
     if scene_id == "god_bless_screen":
         sm.god_bless_screen()
@@ -1512,6 +1608,30 @@ class Api:
         ips = self._state.get("camera_ips") or {}
         for cam in CAMERAS.keys():
             _camera_ips[cam] = (ips.get(cam) or "").strip() or CAMERAS[cam]["ip"]
+
+    def log_user_event(self, action: str, target: str = "", detail=None):
+        try:
+            app_log.user(str(action or "event"), str(target or ""), detail)
+            return True, "logged"
+        except Exception as e:
+            return False, f"log_user_event error: {e}"
+
+    def log_get_info(self):
+        try:
+            return True, {
+                "enabled": app_log.enabled(),
+                "verbose_gostream": app_log.verbose_gostream(),
+                "log_dir": app_log.log_dir(),
+                "session_path": app_log.session_path() or "",
+            }
+        except Exception as e:
+            return False, f"log_get_info error: {e}"
+
+    def open_logs_folder(self):
+        try:
+            return app_log.open_logs_folder()
+        except Exception as e:
+            return False, f"open_logs_folder error: {e}"
 
     # --------- Tracking toggles ---------
     def tracking_on(self, cam: str):
@@ -1622,20 +1742,42 @@ class Api:
         except Exception as e:
             return False, f"focus_manual error: {e}"
 
+    def _focus_mode_http(self, cam: str, manual: bool) -> bool:
+        cmd = "LOCK_mfocus" if manual else "UNLOCK_mfocus"
+        try:
+            ok, resp = _get(
+                cam,
+                "/cgi-bin/param.cgi",
+                params={"ptzcmd": cmd},
+                timeout=HTTP_TIMEOUT,
+            )
+            if not ok or resp is None:
+                return False
+            text = str(resp).upper()
+            if "ERROR" in text or "FAIL" in text or "INVALID" in text:
+                return False
+            return True
+        except Exception:
+            return False
+
     # --------- Focus (auto focus on / off) ---------
     def focus_on(self, cam: str):
         """Auto focus on (UNLOCK). Sony/Brickcom: param.cgi?ptzcmd=UNLOCK_mfocus"""
         try:
-            ok, _ = _get(cam, "/cgi-bin/param.cgi", params={"ptzcmd": "UNLOCK_mfocus"}, timeout=HTTP_TIMEOUT)
-            return ok, "Focus auto"
+            if self._focus_mode_http(cam, manual=False):
+                return True, "Focus auto"
+            ok, msg = _visca_send_udp(cam, _visca_autofocus(True))
+            return (ok, "Focus auto" if ok else msg)
         except Exception as e:
             return False, str(e)
 
     def focus_off(self, cam: str):
         """Auto focus off / manual (LOCK). Sony/Brickcom: param.cgi?ptzcmd=LOCK_mfocus"""
         try:
-            ok, _ = _get(cam, "/cgi-bin/param.cgi", params={"ptzcmd": "LOCK_mfocus"}, timeout=HTTP_TIMEOUT)
-            return ok, "Focus manual"
+            if self._focus_mode_http(cam, manual=True):
+                return True, "Focus manual"
+            ok, msg = _visca_send_udp(cam, _visca_autofocus(False))
+            return (ok, "Focus manual" if ok else msg)
         except Exception as e:
             return False, str(e)
 
@@ -1649,10 +1791,22 @@ class Api:
             if isinstance(resp, dict):
                 v = resp.get("mfocus") or resp.get("focus")
                 if v is not None:
-                    return True, v in ("UNLOCK", "unlock", 1, "1", True, "auto")
-            if "UNLOCK" in text.upper() or "auto" in text.lower():
+                    vs = str(v).strip().upper()
+                    if vs in ("UNLOCK", "AUTO", "1", "ON", "TRUE"):
+                        return True, True
+                    if vs in ("LOCK", "MANUAL", "0", "OFF", "FALSE"):
+                        return True, False
+            upper = text.upper()
+            m = re.search(r"MFOCUS\s*[=:]\s*(\w+)", upper)
+            if m:
+                val = m.group(1)
+                if val in ("UNLOCK", "AUTO", "1", "ON"):
+                    return True, True
+                if val in ("LOCK", "MANUAL", "0", "OFF"):
+                    return True, False
+            if "UNLOCK" in upper or re.search(r"\bAUTO\b", upper):
                 return True, True
-            if "LOCK" in text.upper() or "manual" in text.lower():
+            if re.search(r"\bLOCK\b", upper) or re.search(r"\bMANUAL\b", upper):
                 return True, False
             return True, None
         except Exception:
@@ -1945,6 +2099,13 @@ class Api:
         except Exception as e:
             return False, f"switcher_cut error: {e}"
 
+    def switcher_fade(self, cam: str):
+        try:
+            manager = _get_switcher_manager()
+            return manager.fade_camera(cam)
+        except Exception as e:
+            return False, f"switcher_fade error: {e}"
+
     def switcher_stream_go_live(self):
         try:
             return _get_switcher_manager().stream_go_live()
@@ -2083,12 +2244,15 @@ class Api:
 
     def get_camera_preview_urls(self):
         try:
-            sources = _refresh_preview_server()
-            urls = {cam: preview_url(cam, PREVIEW_PORT) for cam in CAMERAS}
             streams = {
                 cam: _discover_stream_urls_from_ip(_get_camera_ip(cam))
                 for cam in CAMERAS
             }
+            sources = {
+                cam: (streams[cam].get("source") or "") for cam in CAMERAS
+            }
+            start_preview_server(sources, PREVIEW_PORT)
+            urls = {cam: preview_url(cam, PREVIEW_PORT) for cam in CAMERAS}
             return True, {
                 "urls": urls,
                 "sources": sources,
@@ -2116,6 +2280,7 @@ class Api:
 
     def window_close(self):
         try:
+            _shutdown_app()
             if _app_window:
                 _app_window.destroy()
             return True, ""
@@ -2148,6 +2313,9 @@ class Api:
 
     def obs_cut(self, cam: str):
         return self.switcher_cut(cam)
+
+    def obs_fade(self, cam: str):
+        return self.switcher_fade(cam)
 
     def midi_list_devices(self):
         try:
@@ -2234,13 +2402,128 @@ class Api:
             return False, f"download_and_apply_update error: {e}"
 
 
+def _safe_log_args(args: tuple, kwargs: dict) -> dict:
+    out: dict = {}
+    if args:
+        out["args"] = [str(a)[:200] for a in args[:6]]
+    if kwargs:
+        out["kwargs"] = {k: str(v)[:200] for k, v in list(kwargs.items())[:8]}
+    return out
+
+
+def _instrument_api_methods() -> None:
+    """Wrap pywebview API methods so calls and results are written to the debug log."""
+    import functools
+
+    skip = {
+        "log_user_event",
+        "log_get_info",
+        "open_logs_folder",
+        "obs_get_status",
+        "get_camera_preview_urls",
+        "get_speed_pct",
+        "camera_ping",
+        "get_tracking_status",
+        "midi_get_config",
+        "switcher_get_info",
+    }
+    prefixes = (
+        "switcher_",
+        "obs_",
+        "midi_",
+        "tracking_",
+        "focus_",
+        "zoom_",
+        "preset_",
+        "cut_",
+        "save_",
+        "set_",
+        "get_",
+        "apply_",
+        "configure_",
+        "startup_",
+        "download_",
+        "check_for_update",
+        "manual_check",
+        "camera_",
+        "stream_",
+        "refresh_",
+        "load_",
+        "recall_",
+        "store_",
+        "move_",
+        "toggle_",
+        "activate_",
+        "deactivate_",
+    )
+
+    for name in list(vars(Api).keys()):
+        if name.startswith("_") or name in skip:
+            continue
+        fn = getattr(Api, name, None)
+        if not callable(fn):
+            continue
+        if not (name in prefixes or any(name.startswith(p) for p in prefixes)):
+            continue
+
+        def make_wrapper(method_name: str, impl):
+            @functools.wraps(impl)
+            def wrapped(*args, **kwargs):
+                app_log.api(method_name, "call", _safe_log_args(args, kwargs))
+                try:
+                    result = impl(*args, **kwargs)
+                    app_log.api(
+                        method_name,
+                        "return",
+                        app_log.summarize_api_result(result),
+                    )
+                    return result
+                except Exception as e:
+                    app_log.api(method_name, "error", {"error": str(e)})
+                    raise
+
+            return wrapped
+
+        setattr(Api, name, make_wrapper(name, fn))
+
+
+_shutdown_done = False
+
+
+def _shutdown_app():
+    global _shutdown_done, _switcher_manager, _midi_manager
+    if _shutdown_done:
+        return
+    _shutdown_done = True
+    app_log.info("SYSTEM", "Application closing")
+    try:
+        shutdown_preview_server()
+    except Exception:
+        stop_all_previews()
+    if _midi_manager:
+        _midi_manager.shutdown()
+        _midi_manager = None
+    if _switcher_manager:
+        _switcher_manager.shutdown()
+
+
 def main():
     if not _acquire_single_instance():
         sys.exit(0)
 
+    switcher_cfg = _load_switcher_config()
+    _apply_log_settings_from_config(switcher_cfg)
+    app_log.start_session()
+    app_log.info(
+        "SYSTEM",
+        "Application starting",
+        {"version": _load_version(), "frozen": getattr(sys, "frozen", False)},
+    )
+
     ui_base = _ui_base_dir()
     html_path = os.path.join(ui_base, "ui", "ptz-top-half.html")
 
+    _instrument_api_methods()
     api = Api()
     _get_switcher_manager()
     _get_midi_manager()
@@ -2271,19 +2554,15 @@ def main():
         js_api=api,
     )
 
-    def on_closed():
-        global _switcher_manager, _midi_manager
-        stop_all_previews()
-        if _midi_manager:
-            _midi_manager.shutdown()
-            _midi_manager = None
-        if _switcher_manager:
-            _switcher_manager.shutdown()
+    try:
+        _app_window.events.closed += _shutdown_app
+    except Exception:
+        pass
 
     try:
         webview.start(gui="edgechromium", http_server=True, debug=False)
     finally:
-        on_closed()
+        _shutdown_app()
 
 
 if __name__ == "__main__":

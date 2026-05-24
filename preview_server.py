@@ -13,6 +13,29 @@ PREVIEW_PORT = 8765
 _ffmpeg_path: str | None = None
 _procs: dict[str, subprocess.Popen] = {}
 _proc_lock = threading.Lock()
+_stream_locks: dict[str, threading.Lock] = {}
+
+
+def _stream_lock(cam_key: str) -> threading.Lock:
+    with _proc_lock:
+        lock = _stream_locks.get(cam_key)
+        if lock is None:
+            lock = threading.Lock()
+            _stream_locks[cam_key] = lock
+        return lock
+
+
+def _terminate_proc(proc: subprocess.Popen | None) -> None:
+    if not proc:
+        return
+    try:
+        proc.kill()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=1.0)
+    except Exception:
+        pass
 
 
 def _app_install_dir() -> str:
@@ -88,10 +111,7 @@ def _get_proc(cam_key: str, source_url: str) -> subprocess.Popen | None:
         if proc and proc.poll() is None:
             return proc
         if proc:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            _terminate_proc(proc)
         proc = _start_ffmpeg(cam_key, source_url)
         if proc:
             _procs[cam_key] = proc
@@ -101,10 +121,7 @@ def _get_proc(cam_key: str, source_url: str) -> subprocess.Popen | None:
 def stop_all_previews():
     with _proc_lock:
         for proc in list(_procs.values()):
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            _terminate_proc(proc)
         _procs.clear()
 
 
@@ -112,10 +129,7 @@ def invalidate_preview(cam_key: str):
     with _proc_lock:
         proc = _procs.pop(cam_key, None)
         if proc:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            _terminate_proc(proc)
 
 
 class _PreviewHandler(BaseHTTPRequestHandler):
@@ -146,35 +160,38 @@ class _PreviewHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.send_header("Pragma", "no-cache")
             self.end_headers()
-            buf = b""
-            try:
-                while True:
-                    chunk = proc.stdout.read(4096)
-                    if not chunk:
-                        break
-                    buf += chunk
+            with _stream_lock(cam):
+                buf = b""
+                try:
                     while True:
-                        start = buf.find(b"\xff\xd8")
-                        if start < 0:
-                            buf = b""
+                        chunk = proc.stdout.read(4096)
+                        if not chunk:
                             break
-                        end = buf.find(b"\xff\xd9", start + 2)
-                        if end < 0:
-                            buf = buf[start:]
-                            break
-                        frame = buf[start : end + 2]
-                        buf = buf[end + 2 :]
-                        try:
-                            self.wfile.write(b"--frame\r\n")
-                            self.wfile.write(b"Content-Type: image/jpeg\r\n")
-                            self.wfile.write(f"Content-Length: {len(frame)}\r\n\r\n".encode())
-                            self.wfile.write(frame)
-                            self.wfile.write(b"\r\n")
-                            self.wfile.flush()
-                        except Exception:
-                            return
-            except Exception:
-                return
+                        buf += chunk
+                        while True:
+                            start = buf.find(b"\xff\xd8")
+                            if start < 0:
+                                buf = b""
+                                break
+                            end = buf.find(b"\xff\xd9", start + 2)
+                            if end < 0:
+                                buf = buf[start:]
+                                break
+                            frame = buf[start : end + 2]
+                            buf = buf[end + 2 :]
+                            try:
+                                self.wfile.write(b"--frame\r\n")
+                                self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                                self.wfile.write(
+                                    f"Content-Length: {len(frame)}\r\n\r\n".encode()
+                                )
+                                self.wfile.write(frame)
+                                self.wfile.write(b"\r\n")
+                                self.wfile.flush()
+                            except Exception:
+                                return
+                except Exception:
+                    return
         elif self.path == "/health":
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
@@ -185,21 +202,41 @@ class _PreviewHandler(BaseHTTPRequestHandler):
 
 
 _server: ThreadingHTTPServer | None = None
+_server_thread: threading.Thread | None = None
 
 
 def start_preview_server(source_urls: dict[str, str], port: int = PREVIEW_PORT) -> int | None:
-    global _server
+    global _server, _server_thread
     if _server:
         _PreviewHandler.source_urls = dict(source_urls)
         return port
     try:
         _PreviewHandler.source_urls = dict(source_urls)
         _server = ThreadingHTTPServer(("127.0.0.1", port), _PreviewHandler)
-        t = threading.Thread(target=_server.serve_forever, daemon=True)
-        t.start()
+        _server_thread = threading.Thread(target=_server.serve_forever, daemon=True)
+        _server_thread.start()
         return port
     except OSError:
+        _server = None
+        _server_thread = None
         return None
+
+
+def shutdown_preview_server() -> None:
+    """Stop FFmpeg children and the preview HTTP server."""
+    global _server, _server_thread
+    stop_all_previews()
+    srv = _server
+    if srv:
+        try:
+            srv.shutdown()
+        except Exception:
+            pass
+    _server = None
+    th = _server_thread
+    _server_thread = None
+    if th and th.is_alive():
+        th.join(timeout=2.0)
 
 
 def preview_url(cam_key: str, port: int = PREVIEW_PORT) -> str:

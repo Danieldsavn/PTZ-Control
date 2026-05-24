@@ -23,6 +23,10 @@ presets.json
 window.json
 obs.json
 
+# Debug session logs (written beside exe when enabled)
+logs/
+dist/logs/
+
 # Scratch
 .tmp/
 

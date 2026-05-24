@@ -3,13 +3,12 @@ MIDI input (receive-only) — map note-on messages to switcher scene actions.
 """
 from __future__ import annotations
 
-import logging
 import sys
 import threading
 import time
 from typing import Any, Callable, Optional
 
-_log = logging.getLogger(__name__)
+import app_log
 
 try:
     import mido
@@ -189,6 +188,7 @@ class MidiManager:
             self._learn_message = (
                 f"No MIDI note received in {int(LEARN_TIMEOUT_SEC)}s ({label})"
             )
+            app_log.midi("Learn timeout", {"scene": scene, "label": label})
 
     def get_config(self) -> dict[str, Any]:
         device = ""
@@ -231,6 +231,7 @@ class MidiManager:
             self._midi_cfg["device"] = name
             self._persist_locked()
         self._restart_listener()
+        app_log.midi("Device saved", {"device": name or "(none)"})
         if name and not self._device_exists(name):
             return False, f"MIDI device not found: {name}"
         return True, "MIDI device saved"
@@ -269,6 +270,7 @@ class MidiManager:
             self._restart_listener()
         self._arm_learn_timer()
         label = SCENES[scene_id]["label"]
+        app_log.midi("Learn started", {"scene": scene_id, "label": label})
         return (
             True,
             f"Learning MIDI note for {label}… (play a note within {int(LEARN_TIMEOUT_SEC)}s)",
@@ -335,7 +337,10 @@ class MidiManager:
         self._listen_thread = None
 
     def _restart_listener(self) -> None:
+        old_thread = self._listen_thread
         self._close_port()
+        if old_thread and old_thread.is_alive():
+            old_thread.join(timeout=1.0)
         if self._stop.is_set() or not midi_available():
             return
         with self._lock:
@@ -360,7 +365,9 @@ class MidiManager:
         _ensure_mido_backend()
         try:
             port = mido.open_input(device_name)
-        except Exception:
+            app_log.midi("Listener started", {"device": device_name})
+        except Exception as e:
+            app_log.midi("Listener open failed", {"device": device_name, "error": str(e)})
             return
         self._port = port
         try:
@@ -401,6 +408,10 @@ class MidiManager:
                 )
                 self._last_learned = {"scene": learn_scene, "note": note}
                 self._persist_locked()
+            app_log.midi(
+                "Learn mapped",
+                {"scene": learn_scene, "note": note, "label": note_label(note)},
+            )
             self._disarm_learn_timer()
             return
 
@@ -419,6 +430,10 @@ class MidiManager:
                     scene_to_run = scene_id
                     break
         if scene_to_run:
+            app_log.midi(
+                "Note press → scene",
+                {"note": note, "scene": scene_to_run},
+            )
             threading.Thread(
                 target=self._run_scene_safe,
                 args=(scene_to_run, note),
@@ -429,10 +444,8 @@ class MidiManager:
         try:
             self._trigger_scene(scene_id)
         except Exception as exc:
-            _log.warning(
-                "MIDI scene %s (note %s) failed: %s",
-                scene_id,
-                note,
+            app_log.exception(
+                "MIDI",
+                f"Scene {scene_id} (note {note}) failed",
                 exc,
-                exc_info=True,
             )
