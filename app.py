@@ -719,6 +719,7 @@ class SwitcherManager:
             "mp1StillIndex": None,
         }
         self._lock = threading.Lock()
+        self._conn_lock = threading.RLock()
         self._poll_thread = None
         self._stop_polling = False
         self._last_reconnect_attempt = 0.0
@@ -744,13 +745,19 @@ class SwitcherManager:
         self._poll_thread = threading.Thread(target=self._poll_status, daemon=True)
         self._poll_thread.start()
 
-    def _mark_disconnected(self):
+    def _mark_disconnected(self) -> None:
         with self._lock:
             self._connected = False
             self._status_cache["connected"] = False
-        self._client.disconnect()
+        with self._conn_lock:
+            self._client.disconnect()
 
-    def _schedule_reconnect(self):
+    def _kick_reconnect(self) -> None:
+        """Ask the poll thread to reconnect soon (non-blocking)."""
+        self._last_reconnect_attempt = 0.0
+        self._reconnect_backoff = SWITCHER_RECONNECT_MIN_S
+
+    def _schedule_reconnect(self) -> None:
         if not self._host_configured():
             return
         now = time.monotonic()
@@ -811,33 +818,42 @@ class SwitcherManager:
             })
 
     def _try_connect(self) -> bool:
-        self._mark_disconnected()
         if not self._host_configured():
             return False
-        host = (self._config.get("host") or "").strip()
-        try:
-            port = int(self._config.get("port", GOSTREAM_DEFAULT_PORT))
-            self._client.connect(host, port)
-            with self._lock:
-                self._connected = True
-                self._status_cache["connected"] = True
-            self._refresh_status_cache()
+        with self._conn_lock:
+            if self._connected and self._client.connected:
+                return True
+            host = (self._config.get("host") or "").strip()
             try:
-                self.configure_multisource_layout()
-            except Exception:
-                pass
-            try:
-                self.apply_usk1_defaults()
-            except Exception:
-                pass
-            try:
-                self.apply_dsk1_defaults()
-            except Exception:
-                pass
-            return True
-        except (ConnectionRefusedError, OSError, socket.timeout, Exception):
-            self._mark_disconnected()
-            return False
+                port = int(self._config.get("port", GOSTREAM_DEFAULT_PORT))
+                with self._lock:
+                    self._connected = False
+                    self._status_cache["connected"] = False
+                self._client.disconnect()
+                self._client.connect(host, port, timeout=2.0)
+                with self._lock:
+                    self._connected = True
+                    self._status_cache["connected"] = True
+                self._refresh_status_cache()
+                try:
+                    self.configure_multisource_layout()
+                except Exception:
+                    pass
+                try:
+                    self.apply_usk1_defaults()
+                except Exception:
+                    pass
+                try:
+                    self.apply_dsk1_defaults()
+                except Exception:
+                    pass
+                return True
+            except (ConnectionRefusedError, OSError, socket.timeout, Exception):
+                with self._lock:
+                    self._connected = False
+                    self._status_cache["connected"] = False
+                self._client.disconnect()
+                return False
 
     def _reconnect(self):
         self._last_reconnect_attempt = 0.0
@@ -991,6 +1007,9 @@ class SwitcherManager:
 
     def get_status(self):
         with self._lock:
+            if self._connected and not self._client.connected:
+                self._connected = False
+                self._status_cache["connected"] = False
             return self._status_cache.copy()
 
     def refresh_stream_ui_state(self) -> tuple[bool, dict]:
@@ -1005,12 +1024,16 @@ class SwitcherManager:
         except Exception:
             return False, {}
 
-    def _ensure_connected(self):
+    def _ensure_connected(self) -> bool:
+        """Fast check only — reconnect runs on the poll thread."""
         if self._connected and self._client.connected:
             return True
-        self._last_reconnect_attempt = 0.0
-        self._reconnect_backoff = SWITCHER_RECONNECT_MIN_S
-        return self._try_connect()
+        if self._connected and not self._client.connected:
+            with self._lock:
+                self._connected = False
+                self._status_cache["connected"] = False
+        self._kick_reconnect()
+        return False
 
     def _current_mp1_still_index(self) -> int:
         idx = self._client.mp1_still_index

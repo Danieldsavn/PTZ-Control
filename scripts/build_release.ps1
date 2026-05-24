@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
-$Version = "3.18"
+$Version = "3.19"
 Write-Host "Building PTZ-Control v$Version"
 
 # Sync version.json
@@ -47,7 +47,7 @@ $manifest = @{
     version       = $Version
     download_url  = "https://github.com/Danieldsavn/PTZ-Control/releases/download/v$Version/PTZ-Control.exe"
     sha256        = $hash
-    release_notes = "Fix MIDI learned notes not triggering scenes (velocity-0 controllers), Stream 2 test stream Start fix."
+    release_notes = "Fix stream bar lockups (non-blocking reconnect, connection lock), MIDI trigger fix, Stream 2 test stream fix."
 } | ConvertTo-Json -Depth 3
 $manifest | Set-Content -Path "release\update.json" -Encoding UTF8
 Write-Host "Wrote release\update.json"

@@ -1762,6 +1762,9 @@
     "Please power on the video switcher and restart the application.";
   const SWITCHER_DEPENDENT_STARTUP_IDS = ["usk", "multisource", "dsk", "streamui"];
   let switcherConnected = false;
+  let switcherBarBusy = false;
+  let pollObsPending = false;
+  let multisourceLayoutApplied = false;
   let appInitPromise = null;
   const STARTUP_STEP_SETTINGS_TAB = {
     cam1: "general", cam2: "general", switcher: "switcher",
@@ -2289,6 +2292,8 @@
   }
 
   async function pollObsStatus() {
+    if (pollObsPending) return;
+    pollObsPending = true;
     try {
       updateLockState();
       const api = window.pywebview?.api;
@@ -2298,11 +2303,17 @@
         const connected = !!obsStatus.connected;
         if (connected && !switcherWasConnected) {
           switcherWasConnected = true;
-          if (api.configure_multisource_layout) {
-            api.configure_multisource_layout();
+          if (!multisourceLayoutApplied && api.configure_multisource_layout) {
+            multisourceLayoutApplied = true;
+            api.configure_multisource_layout().catch(function () {
+              multisourceLayoutApplied = false;
+            });
           }
         }
-        if (!connected) switcherWasConnected = false;
+        if (!connected) {
+          switcherWasConnected = false;
+          multisourceLayoutApplied = false;
+        }
         switcherConnected = connected;
         updateObsBar("cam1", obsStatus);
         updateObsBar("cam2", obsStatus);
@@ -2322,9 +2333,27 @@
       }
     } catch (e) {
       switcherConnected = false;
+      switcherWasConnected = false;
+      multisourceLayoutApplied = false;
       setSwitcherBarConnected(false);
       updateCameraCutUi("cam1");
       updateCameraCutUi("cam2");
+    } finally {
+      pollObsPending = false;
+    }
+  }
+
+  async function runSwitcherBarAction(fn) {
+    if (switcherBarBusy) {
+      showStreamToast("Please wait…", "warn");
+      return;
+    }
+    if (!requireSwitcherConnected()) return;
+    switcherBarBusy = true;
+    try {
+      await fn();
+    } finally {
+      switcherBarBusy = false;
     }
   }
 
@@ -2498,25 +2527,23 @@
   }
 
   async function streamGoLive() {
-    try {
-      if (!switcherConnected) {
-        showStreamToast("Switcher not connected", "error");
-        return;
-      }
-      const api = window.pywebview?.api;
-      if (!api?.switcher_stream_go_live) return;
-      const [ok, resp] = await api.switcher_stream_go_live();
-      showStreamToast(ok ? "Go Live ✓" : ("Error: " + resp), ok ? "ok" : "error");
-      if (ok) {
-        if (window.pywebview?.api?.obs_get_status) {
-          const [stOk, st] = await api.obs_get_status();
-          if (stOk && st) updateStreamControls(Object.assign({}, st, { streamLive: true }));
+    await runSwitcherBarAction(async function () {
+      try {
+        const api = window.pywebview?.api;
+        if (!api?.switcher_stream_go_live) return;
+        const [ok, resp] = await api.switcher_stream_go_live();
+        showStreamToast(ok ? "Go Live ✓" : ("Error: " + resp), ok ? "ok" : "error");
+        if (ok) {
+          if (window.pywebview?.api?.obs_get_status) {
+            const [stOk, st] = await api.obs_get_status();
+            if (stOk && st) updateStreamControls(Object.assign({}, st, { streamLive: true }));
+          }
+          setTimeout(pollObsStatus, 400);
         }
-        setTimeout(pollObsStatus, 400);
+      } catch (e) {
+        showStreamToast("Go Live error: " + e, "error");
       }
-    } catch (e) {
-      showStreamToast("Go Live error: " + e, "error");
-    }
+    });
   }
 
   let streamStopConfirmOpen = false;
@@ -2559,96 +2586,104 @@
   }
 
   async function streamStop() {
-    try {
-      if (!requireSwitcherConnected()) return;
-      const api = window.pywebview?.api;
-      if (!api?.switcher_stream_stop) return;
-      const [ok, resp] = await api.switcher_stream_stop();
-      showStreamToast(ok ? "Stream stopped ✓" : ("Error: " + resp), ok ? "ok" : "error");
-      if (ok) setTimeout(pollObsStatus, 300);
-    } catch (e) {
-      showStreamToast("Stop error: " + e, "error");
-    }
+    await runSwitcherBarAction(async function () {
+      try {
+        const api = window.pywebview?.api;
+        if (!api?.switcher_stream_stop) return;
+        const [ok, resp] = await api.switcher_stream_stop();
+        showStreamToast(ok ? "Stream stopped ✓" : ("Error: " + resp), ok ? "ok" : "error");
+        if (ok) setTimeout(pollObsStatus, 300);
+      } catch (e) {
+        showStreamToast("Stop error: " + e, "error");
+      }
+    });
   }
 
   async function usk1On() {
-    try {
-      if (!requireSwitcherConnected()) return;
-      const api = window.pywebview?.api;
-      if (!api?.switcher_usk1_on) return;
-      const [ok, resp] = await api.switcher_usk1_on();
-      showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
-      if (ok) setTimeout(pollObsStatus, 300);
-    } catch (e) { showStreamToast("Lyrics error: " + e, "error"); }
+    await runSwitcherBarAction(async function () {
+      try {
+        const api = window.pywebview?.api;
+        if (!api?.switcher_usk1_on) return;
+        const [ok, resp] = await api.switcher_usk1_on();
+        showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
+        if (ok) setTimeout(pollObsStatus, 300);
+      } catch (e) { showStreamToast("Lyrics error: " + e, "error"); }
+    });
   }
   async function usk1Off() {
-    try {
-      if (!requireSwitcherConnected()) return;
-      const api = window.pywebview?.api;
-      if (!api?.switcher_usk1_off) return;
-      const [ok, resp] = await api.switcher_usk1_off();
-      showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
-      if (ok) setTimeout(pollObsStatus, 300);
-    } catch (e) { showStreamToast("Lyrics error: " + e, "error"); }
+    await runSwitcherBarAction(async function () {
+      try {
+        const api = window.pywebview?.api;
+        if (!api?.switcher_usk1_off) return;
+        const [ok, resp] = await api.switcher_usk1_off();
+        showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
+        if (ok) setTimeout(pollObsStatus, 300);
+      } catch (e) { showStreamToast("Lyrics error: " + e, "error"); }
+    });
   }
   async function dsk1On() {
-    try {
-      if (!requireSwitcherConnected()) return;
-      const api = window.pywebview?.api;
-      if (!api?.switcher_dsk1_on) return;
-      const [ok, resp] = await api.switcher_dsk1_on();
-      showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
-      if (ok) setTimeout(pollObsStatus, 300);
-    } catch (e) { showStreamToast("Title error: " + e, "error"); }
+    await runSwitcherBarAction(async function () {
+      try {
+        const api = window.pywebview?.api;
+        if (!api?.switcher_dsk1_on) return;
+        const [ok, resp] = await api.switcher_dsk1_on();
+        showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
+        if (ok) setTimeout(pollObsStatus, 300);
+      } catch (e) { showStreamToast("Title error: " + e, "error"); }
+    });
   }
   async function dsk1Off() {
-    try {
-      if (!requireSwitcherConnected()) return;
-      const api = window.pywebview?.api;
-      if (!api?.switcher_dsk1_off) return;
-      const [ok, resp] = await api.switcher_dsk1_off();
-      showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
-      if (ok) setTimeout(pollObsStatus, 300);
-    } catch (e) { showStreamToast("Title error: " + e, "error"); }
+    await runSwitcherBarAction(async function () {
+      try {
+        const api = window.pywebview?.api;
+        if (!api?.switcher_dsk1_off) return;
+        const [ok, resp] = await api.switcher_dsk1_off();
+        showStreamToast(ok ? resp : ("Error: " + resp), ok ? "ok" : "error");
+        if (ok) setTimeout(pollObsStatus, 300);
+      } catch (e) { showStreamToast("Title error: " + e, "error"); }
+    });
   }
 
   async function splitviewOn() {
-    try {
-      if (!requireSwitcherConnected()) return;
-      const api = window.pywebview?.api;
-      if (!api?.switcher_splitview_on) return;
-      const [ok, resp] = await api.switcher_splitview_on();
-      showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
-      if (ok) setTimeout(pollObsStatus, 400);
-    } catch (e) {
-      showStreamToast("Splitview error: " + e, "error");
-    }
+    await runSwitcherBarAction(async function () {
+      try {
+        const api = window.pywebview?.api;
+        if (!api?.switcher_splitview_on) return;
+        const [ok, resp] = await api.switcher_splitview_on();
+        showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
+        if (ok) setTimeout(pollObsStatus, 400);
+      } catch (e) {
+        showStreamToast("Splitview error: " + e, "error");
+      }
+    });
   }
 
   async function splitviewOff() {
-    try {
-      if (!requireSwitcherConnected()) return;
-      const api = window.pywebview?.api;
-      if (!api?.switcher_splitview_off) return;
-      const [ok, resp] = await api.switcher_splitview_off();
-      showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
-      if (ok) setTimeout(pollObsStatus, 400);
-    } catch (e) {
-      showStreamToast("Splitview error: " + e, "error");
-    }
+    await runSwitcherBarAction(async function () {
+      try {
+        const api = window.pywebview?.api;
+        if (!api?.switcher_splitview_off) return;
+        const [ok, resp] = await api.switcher_splitview_off();
+        showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
+        if (ok) setTimeout(pollObsStatus, 400);
+      } catch (e) {
+        showStreamToast("Splitview error: " + e, "error");
+      }
+    });
   }
 
   async function activateStill(stillIndex) {
-    try {
-      if (!requireSwitcherConnected()) return;
-      const api = window.pywebview?.api;
-      if (!api?.switcher_activate_still) return;
-      const [ok, resp] = await api.switcher_activate_still(stillIndex);
-      showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
-      if (ok) updateStillButtons(stillIndex);
-    } catch (e) {
-      showStreamToast("Still error: " + e, "error");
-    }
+    await runSwitcherBarAction(async function () {
+      try {
+        const api = window.pywebview?.api;
+        if (!api?.switcher_activate_still) return;
+        const [ok, resp] = await api.switcher_activate_still(stillIndex);
+        showStreamToast(ok ? (resp + " ✓") : ("Error: " + resp), ok ? "ok" : "error");
+        if (ok) updateStillButtons(stillIndex);
+      } catch (e) {
+        showStreamToast("Still error: " + e, "error");
+      }
+    });
   }
 
   async function loadStreamSettings() {
