@@ -18,6 +18,7 @@ py -3.12 -m PyInstaller PTZ-Control-Updater.spec --noconfirm
 if ($LASTEXITCODE -ne 0) { throw "Updater build failed" }
 
 Copy-Item version.json dist\version.json -Force
+Copy-Item release\update.json dist\update.json -Force
 
 $depsDir = Join-Path $Root "installer\deps"
 if (-not (Test-Path (Join-Path $depsDir "MicrosoftEdgeWebview2Setup.exe"))) {
@@ -51,6 +52,7 @@ $manifest = @{
 } | ConvertTo-Json -Depth 3
 $manifest | Set-Content -Path "release\update.json" -Encoding UTF8
 Write-Host "Wrote release\update.json"
+Write-Host "Upload update.json to GitHub release (if tag exists): gh release upload v$Version dist\update.json --clobber"
 Write-Host "Artifacts in dist:"
 Get-ChildItem dist -Filter "*.exe" | ForEach-Object {
     $mb = [math]::Round($_.Length / 1MB, 1)

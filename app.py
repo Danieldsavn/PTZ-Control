@@ -93,6 +93,7 @@ from update_checker import (
     get_update_work_dir,
     launch_gui_updater,
     launch_restart,
+    normalize_manifest_url,
     running_exe_path,
     write_update_job,
 )
@@ -577,8 +578,10 @@ def _load_switcher_config():
                 )
                 if "update_check_enabled" not in data:
                     data["update_check_enabled"] = base["update_check_enabled"]
-                if not (data.get("update_manifest_url") or "").strip():
-                    data["update_manifest_url"] = base["update_manifest_url"]
+                data["update_manifest_url"] = normalize_manifest_url(
+                    (data.get("update_manifest_url") or "").strip()
+                    or base["update_manifest_url"]
+                )
                 if "debug_log_enabled" not in data:
                     data["debug_log_enabled"] = base["debug_log_enabled"]
                 if "debug_log_verbose_gostream" not in data:

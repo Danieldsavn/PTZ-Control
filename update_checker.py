@@ -17,7 +17,10 @@ from typing import Any
 import requests
 
 DEFAULT_MANIFEST_URL = (
-    "https://github.com/Danieldsavn/PTZ-Control/releases/latest/download/update.json"
+    "https://raw.githubusercontent.com/Danieldsavn/PTZ-Control/main/release/update.json"
+)
+_FALLBACK_MANIFEST_URLS = (
+    "https://github.com/Danieldsavn/PTZ-Control/releases/latest/download/update.json",
 )
 EXE_NAME = "PTZ-Control.exe"
 UPDATER_EXE_NAME = "PTZ-Control-Updater.exe"
@@ -201,16 +204,36 @@ def version_greater(latest: str, current: str) -> bool:
     return parse_version(latest) > parse_version(current)
 
 
-def fetch_manifest(manifest_url: str) -> dict[str, Any]:
+def normalize_manifest_url(manifest_url: str) -> str:
+    """Map broken per-release manifest URLs to the stable raw.githubusercontent.com URL."""
     url = (manifest_url or "").strip()
     if not url:
-        return {"error": "No update manifest URL configured"}
-    try:
-        resp = requests.get(url, timeout=15, headers={"User-Agent": "PTZ-Control-Updater"})
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        return {"error": f"Could not fetch update info: {e}"}
+        return DEFAULT_MANIFEST_URL
+    if re.search(r"/releases/download/v[\d.]+/update\.json", url, re.I):
+        return DEFAULT_MANIFEST_URL
+    return url
+
+
+def fetch_manifest(manifest_url: str) -> dict[str, Any]:
+    primary = normalize_manifest_url(manifest_url)
+    urls: list[str] = []
+    for u in (primary, DEFAULT_MANIFEST_URL, *_FALLBACK_MANIFEST_URLS):
+        if u and u not in urls:
+            urls.append(u)
+    last_error = "No update manifest URL configured"
+    data = None
+    for url in urls:
+        try:
+            resp = requests.get(
+                url, timeout=15, headers={"User-Agent": "PTZ-Control-Updater"}
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as e:
+            last_error = f"Could not fetch update info: {e}"
+    if data is None:
+        return {"error": last_error}
     if not isinstance(data, dict):
         return {"error": "Invalid update manifest"}
     version = str(data.get("version") or "").strip()
