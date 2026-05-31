@@ -746,6 +746,9 @@ GOD_BLESS_STILL_INDEX = 5
 TITLE_STILL_INDEX = 1
 
 # ---------------- GoStream physical switcher manager ----------------
+# v3.23 regressions (fixed in 3.25+): no blocking _try_connect on init; stale GSP
+# recv disconnected during bursty traffic; command worker + poll fought the socket;
+# watchdog timeout called _kick_reconnect while a command still held the link.
 class SwitcherManager:
     """OSEE GoStream Duet (and compatible) over GSP TCP protocol."""
 
@@ -787,6 +790,8 @@ class SwitcherManager:
         self._cmd_queue: queue.Queue = queue.Queue()
         self._cmd_worker_busy = False
         self._cmd_epoch = 0
+        self._connect_setup_done = False
+        self._connect_setup_at = 0.0
         self._cmd_thread = threading.Thread(
             target=self._command_worker, name="SwitcherCommandWorker", daemon=True
         )
@@ -817,7 +822,8 @@ class SwitcherManager:
                 t0 = time.monotonic()
                 app_log.switcher("Command start", {"name": name})
                 try:
-                    result = fn()
+                    with self._conn_lock:
+                        result = fn()
                     if epoch < self._cmd_epoch:
                         app_log.switcher(
                             "Dropped stale command result",
@@ -883,7 +889,6 @@ class SwitcherManager:
                 "Command timeout (watchdog)",
                 {"name": name, "timeout_s": deadline},
             )
-            self._kick_reconnect()
             return False, COMMAND_BUSY_MSG
         except Exception as e:
             app_log.switcher("Command error", {"name": name, "error": str(e)})
@@ -904,6 +909,7 @@ class SwitcherManager:
         with self._lock:
             self._connected = False
             self._status_cache["connected"] = False
+            self._connect_setup_done = False
         with self._conn_lock:
             self._client.disconnect()
 
@@ -1016,8 +1022,18 @@ class SwitcherManager:
             self.apply_dsk1_defaults()
         except Exception:
             pass
+        with self._lock:
+            self._connect_setup_done = True
+            self._connect_setup_at = time.monotonic()
         app_log.switcher("Connected", {"host": host, "port": port})
         return True
+
+    def startup_setup_is_fresh(self) -> bool:
+        """True when connect path already ran USK/multisource/DSK (splash can skip worker)."""
+        with self._lock:
+            if not self._connect_setup_done:
+                return False
+            return (time.monotonic() - self._connect_setup_at) < 30.0
 
     def _reconnect(self):
         self._last_reconnect_attempt = 0.0
@@ -1068,7 +1084,16 @@ class SwitcherManager:
             return False, str(e)
 
     def run_startup_setup(self) -> dict[str, Any]:
-        """One worker job for splash: USK, multisource, DSK, stream UI (avoids queue pile-up)."""
+        """Splash: USK, multisource, DSK, stream UI. Skips heavy work if connect already configured."""
+        if self.startup_setup_is_fresh():
+            stream_ok, stream_st = self.refresh_stream_ui_state()
+            return {
+                "usk": True,
+                "multisource": True,
+                "dsk": True,
+                "streamui": bool(stream_ok),
+                "status": stream_st if stream_ok else {},
+            }
         usk_ok, _ = self.apply_usk1_defaults()
         multi_ok, _ = self.configure_multisource_layout()
         dsk_ok, _ = self.apply_dsk1_defaults()
@@ -1178,11 +1203,14 @@ class SwitcherManager:
                     self._client.send_get(
                         "multiSourceWindowSource", [MULTISOURCE_WINDOW_2_ID]
                     )
-                # v3.22 health: failed sends only (stale recv caused false disconnects)
+                # v3.22 health: failed sends only (v3.23 stale-recv disconnect broke connect)
                 if not ok_pgm or not ok_pvw or not ok_live:
-                    self._poll_failures += 1
-                    if self._poll_failures >= SWITCHER_POLL_FAIL_DISCONNECT:
-                        self._mark_disconnected()
+                    if not self._cmd_worker_busy:
+                        self._poll_failures += 1
+                        if self._poll_failures >= SWITCHER_POLL_FAIL_DISCONNECT:
+                            self._mark_disconnected()
+                            self._poll_failures = 0
+                    else:
                         self._poll_failures = 0
                 else:
                     self._poll_failures = 0
@@ -2408,6 +2436,8 @@ class Api:
     def switcher_startup_setup(self):
         try:
             m = _get_switcher_manager()
+            if m.startup_setup_is_fresh():
+                return True, m.run_startup_setup()
             out = m.run_on_worker(
                 m.run_startup_setup,
                 name="startup_setup",

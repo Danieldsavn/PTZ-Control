@@ -205,7 +205,7 @@ def _prune_old_sessions() -> None:
                         tail = f.read()
                     with open(path, "wb") as f:
                         f.write(
-                            b"... [log truncated — size cap]\n".encode("utf-8")
+                            "... [log truncated — size cap]\n".encode("utf-8")
                             + tail
                         )
             except OSError:

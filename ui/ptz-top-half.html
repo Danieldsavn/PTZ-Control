@@ -1845,6 +1845,7 @@
   }
   let pollOnlineIntervalId = null;
   let pollObsIntervalId = null;
+  const POLL_OBS_INTERVAL_MS = 1200;
   let multisourceLayoutApplied = false;
   let appInitPromise = null;
   const STARTUP_STEP_SETTINGS_TAB = {
@@ -3830,6 +3831,9 @@
         } else if (!cfg.device) {
           statusEl.textContent = "Select a MIDI input device and click Save device.";
           statusEl.classList.remove("warn");
+        } else if (cfg.listener_error) {
+          statusEl.textContent = "MIDI: " + cfg.listener_error;
+          statusEl.classList.add("warn");
         } else if (cfg.listening) {
           statusEl.textContent = "Listening on: " + cfg.device;
           statusEl.classList.remove("warn");
@@ -4367,7 +4371,7 @@
     setSwitcherBarConnected(false);
     updateStreamControls({ connected: false });
     pollObsStatus();
-    pollObsIntervalId = setInterval(pollObsStatus, 300);
+    pollObsIntervalId = setInterval(pollObsStatus, POLL_OBS_INTERVAL_MS);
     loadCameraPreviews();
     wireSettingsDirtyListeners();
     } catch (e) {
