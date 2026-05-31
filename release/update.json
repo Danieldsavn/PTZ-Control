@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.27/PTZ-Control.exe",
-    "sha256":  "3deef1eac0cf15a6e34dc75ffd41f774b7de883fdb1d024351ac27393f56ce4a",
-    "version":  "3.27",
-    "release_notes":  "Restore v3.22 switcher connect behavior; fix v3.23 worker/reconnect races; poll throttle; MIDI retry UI; logging fixes."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.28/PTZ-Control.exe",
+    "sha256":  "8bbcd20da7cecd184281e1452fc12f74f9580f201abee3a3d04607b498d3cb01",
+    "version":  "3.28",
+    "release_notes":  "Revert command worker queue; CUT and stream controls run direct like v3.22 (fixes 3.27 slowness and failed cuts)."
 }

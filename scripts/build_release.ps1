@@ -48,7 +48,7 @@ $manifest = @{
     version       = $Version
     download_url  = "https://github.com/Danieldsavn/PTZ-Control/releases/download/v$Version/PTZ-Control.exe"
     sha256        = $hash
-    release_notes = "Revert command worker queue — CUT and stream controls run direct like v3.22 (fixes 3.27 slowness and failed cuts)."
+    release_notes = "Revert command worker queue; CUT and stream controls run direct like v3.22 (fixes 3.27 slowness and failed cuts)."
 } | ConvertTo-Json -Depth 3
 $manifest | Set-Content -Path "release\update.json" -Encoding UTF8
 Write-Host "Wrote release\update.json"
