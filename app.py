@@ -1,10 +1,8 @@
 import os
-import queue
 import re
 import subprocess
 import sys
-from concurrent.futures import Future
-from typing import Any, Callable
+from typing import Any
 
 # PyWebView uses pythonnet/Edge; configure before webview import (critical for frozen restart).
 if sys.platform == "win32":
@@ -735,20 +733,14 @@ SWITCHER_RECONNECT_MIN_S = 1.0
 SWITCHER_RECONNECT_MAX_S = 5.0
 SWITCHER_POLL_FAIL_DISCONNECT = 3
 GSP_RECV_STALE_S = 4.0
-SWITCHER_COMMAND_TIMEOUT_S = 12.0
-SWITCHER_STARTUP_TIMEOUT_S = 20.0
-COMMAND_BUSY_MSG = (
-    "Switcher busy — command timed out. Try again or check logs (Settings → General)."
-)
 # Re-check upstream key 1 (Luma, HDMI 3 fill, HDMI 4 key) on this interval
 USK_VERIFY_INTERVAL_S = 8.0
 GOD_BLESS_STILL_INDEX = 5
 TITLE_STILL_INDEX = 1
 
 # ---------------- GoStream physical switcher manager ----------------
-# v3.23 regressions (fixed in 3.25+): no blocking _try_connect on init; stale GSP
-# recv disconnected during bursty traffic; command worker + poll fought the socket;
-# watchdog timeout called _kick_reconnect while a command still held the link.
+# Switcher commands run on the API thread (v3.22 model). A background worker queue
+# (v3.23–3.27) serialized CUT/lyrics and fought the poll/connect locks.
 class SwitcherManager:
     """OSEE GoStream Duet (and compatible) over GSP TCP protocol."""
 
@@ -787,112 +779,11 @@ class SwitcherManager:
         self._test_stream_active = False
         self._test_stream_owns_live = False
         self._test_stream_saved_stream1_enable: bool | None = None
-        self._cmd_queue: queue.Queue = queue.Queue()
-        self._cmd_worker_busy = False
-        self._cmd_epoch = 0
         self._connect_setup_done = False
         self._connect_setup_at = 0.0
-        self._cmd_thread = threading.Thread(
-            target=self._command_worker, name="SwitcherCommandWorker", daemon=True
-        )
-        self._cmd_thread.start()
         self._ensure_polling()
         # v3.22: block until first TCP connect attempt finishes (do not rely on poll alone)
         self._try_connect()
-
-    def _command_worker(self) -> None:
-        """Run blocking switcher commands off the pywebview API thread."""
-        while True:
-            item = self._cmd_queue.get()
-            try:
-                if item is None:
-                    return
-                fut, fn, name, epoch = item
-                if epoch < self._cmd_epoch:
-                    app_log.switcher(
-                        "Skipping stale queued command",
-                        {"name": name, "epoch": epoch},
-                    )
-                    if not fut.done():
-                        fut.cancel()
-                    continue
-                self._cmd_worker_busy = True
-                if not fut.set_running_or_notify():
-                    pass
-                t0 = time.monotonic()
-                app_log.switcher("Command start", {"name": name})
-                try:
-                    with self._conn_lock:
-                        result = fn()
-                    if epoch < self._cmd_epoch:
-                        app_log.switcher(
-                            "Dropped stale command result",
-                            {
-                                "name": name,
-                                "duration_s": round(time.monotonic() - t0, 3),
-                            },
-                        )
-                    elif not fut.done():
-                        fut.set_result(result)
-                except Exception as exc:
-                    if epoch >= self._cmd_epoch and not fut.done():
-                        fut.set_exception(exc)
-                    elif epoch < self._cmd_epoch:
-                        app_log.switcher(
-                            "Dropped stale command error",
-                            {"name": name, "error": str(exc)},
-                        )
-                finally:
-                    app_log.switcher(
-                        "Command end",
-                        {
-                            "name": name,
-                            "duration_s": round(time.monotonic() - t0, 3),
-                        },
-                    )
-            finally:
-                self._cmd_worker_busy = False
-                self._cmd_queue.task_done()
-
-    def _enqueue_worker(self, fn: Callable[[], Any], *, name: str) -> None:
-        """Queue switcher work without blocking the caller (poll thread, connect, etc.)."""
-        fut: Future = Future()
-        with self._lock:
-            epoch = self._cmd_epoch
-        self._cmd_queue.put((fut, fn, name, epoch))
-
-    def run_on_worker(
-        self,
-        fn: Callable[[], Any],
-        *,
-        name: str = "command",
-        timeout_s: float | None = None,
-    ) -> Any:
-        """Queue work on the command worker; API thread waits with a watchdog timeout."""
-        deadline = (
-            float(timeout_s)
-            if timeout_s is not None
-            else SWITCHER_COMMAND_TIMEOUT_S
-        )
-        with self._lock:
-            epoch = self._cmd_epoch
-        fut: Future = Future()
-        self._cmd_queue.put((fut, fn, name, epoch))
-        try:
-            return fut.result(timeout=deadline)
-        except TimeoutError:
-            with self._lock:
-                self._cmd_epoch += 1
-            if not fut.done():
-                fut.cancel()
-            app_log.switcher(
-                "Command timeout (watchdog)",
-                {"name": name, "timeout_s": deadline},
-            )
-            return False, COMMAND_BUSY_MSG
-        except Exception as e:
-            app_log.switcher("Command error", {"name": name, "error": str(e)})
-            return False, str(e)
 
     def _host_configured(self) -> bool:
         return bool((self._config.get("host") or "").strip())
@@ -1205,12 +1096,9 @@ class SwitcherManager:
                     )
                 # v3.22 health: failed sends only (v3.23 stale-recv disconnect broke connect)
                 if not ok_pgm or not ok_pvw or not ok_live:
-                    if not self._cmd_worker_busy:
-                        self._poll_failures += 1
-                        if self._poll_failures >= SWITCHER_POLL_FAIL_DISCONNECT:
-                            self._mark_disconnected()
-                            self._poll_failures = 0
-                    else:
+                    self._poll_failures += 1
+                    if self._poll_failures >= SWITCHER_POLL_FAIL_DISCONNECT:
+                        self._mark_disconnected()
                         self._poll_failures = 0
                 else:
                     self._poll_failures = 0
@@ -1707,27 +1595,11 @@ class SwitcherManager:
         if self._poll_thread:
             self._poll_thread.join(timeout=1.0)
             self._poll_thread = None
-        try:
-            self._cmd_queue.put(None)
-        except Exception:
-            pass
-        if self._cmd_thread and self._cmd_thread.is_alive():
-            self._cmd_thread.join(timeout=2.0)
         with self._conn_lock:
             self._client.disconnect()
 
 
 _switcher_manager = None
-
-
-def _run_switcher_cmd(
-    manager: SwitcherManager,
-    fn: Callable[[], Any],
-    *,
-    name: str,
-) -> Any:
-    """Run a blocking switcher operation on the command worker thread."""
-    return manager.run_on_worker(fn, name=name)
 
 
 def _get_switcher_manager():
@@ -1749,24 +1621,22 @@ def _save_midi_config_section(midi_cfg: dict) -> None:
 
 def _midi_trigger_scene(scene_id: str) -> None:
     app_log.midi("Trigger scene", {"scene": scene_id})
-    sm = _get_switcher_manager()
-
-    def run() -> Any:
+    try:
+        sm = _get_switcher_manager()
         if scene_id == "god_bless_screen":
-            return sm.god_bless_screen()
+            sm.god_bless_screen()
+            return
         sm.exit_god_bless_if_active()
         if scene_id == "full_screen_camera":
             sm.usk1_set(False)
-            return sm.splitview_off()
+            sm.splitview_off()
+            return
         if scene_id == "splitview":
-            return sm.splitview_on()
+            sm.splitview_on()
+            return
         if scene_id == "camera_plus_lyrics":
             sm.splitview_off()
-            return sm.usk1_set(True)
-        return True, ""
-
-    try:
-        sm.run_on_worker(run, name=f"midi_{scene_id}", timeout_s=15.0)
+            sm.usk1_set(True)
     except Exception as e:
         app_log.midi("Trigger failed", {"scene": scene_id, "error": str(e)})
 
@@ -2278,79 +2148,61 @@ class Api:
 
     def switcher_cut(self, cam: str):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(m, lambda: m.cut_camera(cam), name=f"cut_{cam}")
+            return _get_switcher_manager().cut_camera(cam)
         except Exception as e:
             return False, f"switcher_cut error: {e}"
 
     def switcher_fade(self, cam: str):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(m, lambda: m.fade_camera(cam), name=f"fade_{cam}")
+            return _get_switcher_manager().fade_camera(cam)
         except Exception as e:
             return False, f"switcher_fade error: {e}"
 
     def switcher_stream_go_live(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(m, m.stream_go_live, name="stream_go_live")
+            return _get_switcher_manager().stream_go_live()
         except Exception as e:
             return False, f"switcher_stream_go_live error: {e}"
 
     def switcher_stream_stop(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(m, m.stream_stop, name="stream_stop")
+            return _get_switcher_manager().stream_stop()
         except Exception as e:
             return False, f"switcher_stream_stop error: {e}"
 
     def switcher_test_stream_start(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(m, m.test_stream_start, name="test_stream_start")
+            return _get_switcher_manager().test_stream_start()
         except Exception as e:
             return False, f"switcher_test_stream_start error: {e}"
 
     def switcher_test_stream_stop(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(m, m.test_stream_stop, name="test_stream_stop")
+            return _get_switcher_manager().test_stream_stop()
         except Exception as e:
             return False, f"switcher_test_stream_stop error: {e}"
 
     def switcher_usk1_on(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(
-                m, lambda: m.usk1_set(True), name="usk1_on"
-            )
+            return _get_switcher_manager().usk1_set(True)
         except Exception as e:
             return False, f"switcher_usk1_on error: {e}"
 
     def switcher_usk1_off(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(
-                m, lambda: m.usk1_set(False), name="usk1_off"
-            )
+            return _get_switcher_manager().usk1_set(False)
         except Exception as e:
             return False, f"switcher_usk1_off error: {e}"
 
     def switcher_dsk1_on(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(
-                m, lambda: m.dsk1_set(True), name="dsk1_on"
-            )
+            return _get_switcher_manager().dsk1_set(True)
         except Exception as e:
             return False, f"switcher_dsk1_on error: {e}"
 
     def switcher_dsk1_off(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(
-                m, lambda: m.dsk1_set(False), name="dsk1_off"
-            )
+            return _get_switcher_manager().dsk1_set(False)
         except Exception as e:
             return False, f"switcher_dsk1_off error: {e}"
 
@@ -2362,51 +2214,37 @@ class Api:
 
     def switcher_set_stream1_key(self, key_text: str):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(
-                m, lambda: m.set_stream1_key(key_text), name="set_stream1_key"
-            )
+            return _get_switcher_manager().set_stream1_key(key_text)
         except Exception as e:
             return False, f"switcher_set_stream1_key error: {e}"
 
     def switcher_activate_still(self, still_index: int):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(
-                m, lambda: m.activate_still(still_index), name=f"still_{still_index}"
-            )
+            return _get_switcher_manager().activate_still(still_index)
         except Exception as e:
             return False, f"switcher_activate_still error: {e}"
 
     def switcher_splitview_on(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(m, m.splitview_on, name="splitview_on")
+            return _get_switcher_manager().splitview_on()
         except Exception as e:
             return False, f"switcher_splitview_on error: {e}"
 
     def switcher_splitview_off(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(m, m.splitview_off, name="splitview_off")
+            return _get_switcher_manager().splitview_off()
         except Exception as e:
             return False, f"switcher_splitview_off error: {e}"
 
     def configure_multisource_layout(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(
-                m, m.configure_multisource_layout, name="configure_multisource_layout"
-            )
+            return _get_switcher_manager().configure_multisource_layout()
         except Exception as e:
             return False, f"configure_multisource_layout error: {e}"
 
     def switcher_refresh_stream_ui(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(
-                m, m.refresh_stream_ui_state, name="refresh_stream_ui"
-            )
+            return _get_switcher_manager().refresh_stream_ui_state()
         except Exception as e:
             return False, f"switcher_refresh_stream_ui error: {e}"
 
@@ -2435,38 +2273,19 @@ class Api:
 
     def switcher_startup_setup(self):
         try:
-            m = _get_switcher_manager()
-            if m.startup_setup_is_fresh():
-                return True, m.run_startup_setup()
-            out = m.run_on_worker(
-                m.run_startup_setup,
-                name="startup_setup",
-                timeout_s=SWITCHER_STARTUP_TIMEOUT_S,
-            )
-            if isinstance(out, tuple) and len(out) >= 2 and out[0] is False:
-                return False, {
-                    "usk": False,
-                    "multisource": False,
-                    "dsk": False,
-                    "streamui": False,
-                    "status": {},
-                    "error": out[1],
-                }
-            return True, out
+            return True, _get_switcher_manager().run_startup_setup()
         except Exception as e:
             return False, f"switcher_startup_setup error: {e}"
 
     def apply_usk1_defaults(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(m, m.apply_usk1_defaults, name="apply_usk1_defaults")
+            return _get_switcher_manager().apply_usk1_defaults()
         except Exception as e:
             return False, f"apply_usk1_defaults error: {e}"
 
     def apply_dsk1_defaults(self):
         try:
-            m = _get_switcher_manager()
-            return _run_switcher_cmd(m, m.apply_dsk1_defaults, name="apply_dsk1_defaults")
+            return _get_switcher_manager().apply_dsk1_defaults()
         except Exception as e:
             return False, f"apply_dsk1_defaults error: {e}"
 
