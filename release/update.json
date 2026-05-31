@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.28/PTZ-Control.exe",
-    "sha256":  "8bbcd20da7cecd184281e1452fc12f74f9580f201abee3a3d04607b498d3cb01",
-    "version":  "3.28",
-    "release_notes":  "Revert command worker queue; CUT and stream controls run direct like v3.22 (fixes 3.27 slowness and failed cuts)."
+    "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.22/PTZ-Control.exe",
+    "sha256": "f970942b65154d5d292b3df2c883603c2aab989ee707de61c26acd68b2b54eab",
+    "version": "3.22",
+    "release_notes": "Start maximized; larger camera previews (+20%)."
 }
