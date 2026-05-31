@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.23/PTZ-Control.exe",
-    "sha256":  "acad33626e499b8c8a935501b7c0abe2def761b152ec8123a82a003b21eb75d9",
-    "version":  "3.23",
-    "release_notes":  "Switcher reliability: command worker, stale GSP detection, busy watchdog, non-blocking CUT/stream UI."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.24/PTZ-Control.exe",
+    "sha256":  "6beb389275a34e22fa07b543abb46a2e8796b2c7bd3034ef0ac0c4ea2bc422e9",
+    "version":  "3.24",
+    "release_notes":  "Fix startup: bundled switcher setup (USK, multisource, DSK, stream) so splash steps are not skipped."
 }

@@ -3031,7 +3031,8 @@
   }
 
 
-  const SPLASH_MAX_MS = 10000;
+  const SPLASH_MAX_MS = 22000;
+  let switcherStartupSetupCache = null;
   const SPLASH_MIN_STEP_MS = 1000;
 
   function waitUntil(ts) {
@@ -3350,6 +3351,35 @@
 
   let startupStepsList = [];
 
+  async function runSwitcherStartupSetupOnce() {
+    if (switcherStartupSetupCache) return switcherStartupSetupCache;
+    const api = window.pywebview?.api;
+    if (!api?.switcher_startup_setup) return null;
+    try {
+      const [ok, data] = await api.switcher_startup_setup();
+      switcherStartupSetupCache = ok && data ? data : {
+        usk: false,
+        multisource: false,
+        dsk: false,
+        streamui: false,
+        status: {}
+      };
+      if (switcherStartupSetupCache.status) {
+        updateStreamControls(switcherStartupSetupCache.status);
+      }
+      return switcherStartupSetupCache;
+    } catch (e) {
+      switcherStartupSetupCache = {
+        usk: false,
+        multisource: false,
+        dsk: false,
+        streamui: false,
+        status: {}
+      };
+      return switcherStartupSetupCache;
+    }
+  }
+
   function buildStartupSteps() {
     const steps = [
       {
@@ -3407,10 +3437,8 @@
       settingsTab: "switcher",
       label: "Verifying Upstream Key Settings",
       run: async function () {
-        const api = window.pywebview?.api;
-        if (!api?.apply_usk1_defaults) return false;
-        const [ok] = await api.apply_usk1_defaults();
-        return !!ok;
+        const r = await runSwitcherStartupSetupOnce();
+        return !!(r && r.usk);
       }
     });
     steps.push({
@@ -3418,10 +3446,8 @@
       settingsTab: "switcher",
       label: "Configuring Multisource Layout",
       run: async function () {
-        const api = window.pywebview?.api;
-        if (!api?.configure_multisource_layout) return false;
-        const [ok] = await api.configure_multisource_layout();
-        return !!ok;
+        const r = await runSwitcherStartupSetupOnce();
+        return !!(r && r.multisource);
       }
     });
     steps.push({
@@ -3429,10 +3455,8 @@
       settingsTab: "switcher",
       label: "Setting Downstream Key to Still 1",
       run: async function () {
-        const api = window.pywebview?.api;
-        if (!api?.apply_dsk1_defaults) return false;
-        const [ok] = await api.apply_dsk1_defaults();
-        return !!ok;
+        const r = await runSwitcherStartupSetupOnce();
+        return !!(r && r.dsk);
       }
     });
     steps.push({
@@ -3440,11 +3464,8 @@
         settingsTab: "stream",
       label: "Reading Lyrics, Title & Still Status",
       run: async function () {
-        const api = window.pywebview?.api;
-        if (!api?.switcher_refresh_stream_ui) return false;
-        const [ok, st] = await api.switcher_refresh_stream_ui();
-        if (ok && st) updateStreamControls(st);
-        return !!ok;
+        const r = await runSwitcherStartupSetupOnce();
+        return !!(r && r.streamui);
       }
     });
     startupStepsList = steps;
@@ -3468,6 +3489,7 @@
   }
 
   async function runStartupSequence() {
+    switcherStartupSetupCache = null;
     await loadObsConfigEarly();
     const deadline = Date.now() + SPLASH_MAX_MS;
     const steps = buildStartupSteps();

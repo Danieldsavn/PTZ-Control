@@ -734,8 +734,9 @@ def _load_version():
 SWITCHER_RECONNECT_MIN_S = 1.0
 SWITCHER_RECONNECT_MAX_S = 5.0
 SWITCHER_POLL_FAIL_DISCONNECT = 3
-GSP_RECV_STALE_S = 2.5
+GSP_RECV_STALE_S = 4.0
 SWITCHER_COMMAND_TIMEOUT_S = 12.0
+SWITCHER_STARTUP_TIMEOUT_S = 20.0
 COMMAND_BUSY_MSG = (
     "Switcher busy — command timed out. Try again or check logs (Settings → General)."
 )
@@ -784,6 +785,7 @@ class SwitcherManager:
         self._test_stream_owns_live = False
         self._test_stream_saved_stream1_enable: bool | None = None
         self._cmd_queue: queue.Queue = queue.Queue()
+        self._cmd_worker_busy = False
         self._cmd_thread = threading.Thread(
             target=self._command_worker, name="SwitcherCommandWorker", daemon=True
         )
@@ -799,6 +801,7 @@ class SwitcherManager:
                 if item is None:
                     return
                 fut, fn, name = item
+                self._cmd_worker_busy = True
                 if not fut.set_running_or_notify():
                     pass
                 try:
@@ -807,7 +810,13 @@ class SwitcherManager:
                 except Exception as exc:
                     fut.set_exception(exc)
             finally:
+                self._cmd_worker_busy = False
                 self._cmd_queue.task_done()
+
+    def _enqueue_worker(self, fn: Callable[[], Any], *, name: str) -> None:
+        """Queue switcher work without blocking the caller (poll thread, connect, etc.)."""
+        fut: Future = Future()
+        self._cmd_queue.put((fut, fn, name))
 
     def run_on_worker(
         self,
@@ -951,18 +960,6 @@ class SwitcherManager:
                 self._client.disconnect()
                 return False
         self._refresh_status_cache()
-        try:
-            self.configure_multisource_layout()
-        except Exception:
-            pass
-        try:
-            self.apply_usk1_defaults()
-        except Exception:
-            pass
-        try:
-            self.apply_dsk1_defaults()
-        except Exception:
-            pass
         app_log.switcher("Connected", {"host": host, "port": port})
         return True
 
@@ -1014,6 +1011,20 @@ class SwitcherManager:
         except Exception as e:
             return False, str(e)
 
+    def run_startup_setup(self) -> dict[str, Any]:
+        """One worker job for splash: USK, multisource, DSK, stream UI (avoids queue pile-up)."""
+        usk_ok, _ = self.apply_usk1_defaults()
+        multi_ok, _ = self.configure_multisource_layout()
+        dsk_ok, _ = self.apply_dsk1_defaults()
+        stream_ok, stream_st = self.refresh_stream_ui_state()
+        return {
+            "usk": bool(usk_ok),
+            "multisource": bool(multi_ok),
+            "dsk": bool(dsk_ok),
+            "streamui": bool(stream_ok),
+            "status": stream_st if stream_ok else {},
+        }
+
     def _verify_usk1_defaults(self) -> None:
         """Poll USK1 state and re-apply Luma / HDMI 3 / HDMI 4 when drifted."""
         if not self._connected or not self._client.connected:
@@ -1027,7 +1038,10 @@ class SwitcherManager:
             time.sleep(0.1)
             fill, key_src = self._usk1_target_sources()
             if not self._client.usk1_luma_matches(fill, key_src):
-                self.apply_usk1_defaults()
+                self._enqueue_worker(
+                    lambda: self.apply_usk1_defaults(),
+                    name="usk_verify",
+                )
         except Exception:
             pass
 
@@ -1108,7 +1122,10 @@ class SwitcherManager:
                     self._client.send_get(
                         "multiSourceWindowSource", [MULTISOURCE_WINDOW_2_ID]
                     )
-                stale = self._client.recv_is_stale(GSP_RECV_STALE_S)
+                stale = (
+                    not self._cmd_worker_busy
+                    and self._client.recv_is_stale(GSP_RECV_STALE_S)
+                )
                 if stale or not ok_pgm or not ok_pvw or not ok_live:
                     if stale:
                         app_log.switcher(
@@ -2339,6 +2356,27 @@ class Api:
 
     def obs_get_status(self):
         return self.switcher_get_status()
+
+    def switcher_startup_setup(self):
+        try:
+            m = _get_switcher_manager()
+            out = m.run_on_worker(
+                m.run_startup_setup,
+                name="startup_setup",
+                timeout_s=SWITCHER_STARTUP_TIMEOUT_S,
+            )
+            if isinstance(out, tuple) and len(out) >= 2 and out[0] is False:
+                return False, {
+                    "usk": False,
+                    "multisource": False,
+                    "dsk": False,
+                    "streamui": False,
+                    "status": {},
+                    "error": out[1],
+                }
+            return True, out
+        except Exception as e:
+            return False, f"switcher_startup_setup error: {e}"
 
     def apply_usk1_defaults(self):
         try:
