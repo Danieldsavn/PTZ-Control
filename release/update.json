@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.22/PTZ-Control.exe",
-    "sha256":  "f970942b65154d5d292b3df2c883603c2aab989ee707de61c26acd68b2b54eab",
-    "version":  "3.22",
-    "release_notes":  "Start maximized; larger camera previews (+20%)."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.23/PTZ-Control.exe",
+    "sha256":  "acad33626e499b8c8a935501b7c0abe2def761b152ec8123a82a003b21eb75d9",
+    "version":  "3.23",
+    "release_notes":  "Switcher reliability: command worker, stale GSP detection, busy watchdog, non-blocking CUT/stream UI."
 }
