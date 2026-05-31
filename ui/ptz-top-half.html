@@ -1711,6 +1711,7 @@
           <div style="display:flex; flex-direction:column; gap:8px; flex:1; min-width:0;">
             <p id="debugLogPathLine" class="small" style="margin:0; color:#64748b; word-break:break-all;">—</p>
             <button type="button" class="ghost" onclick="openLogsFolder()">Open logs folder</button>
+            <p class="small" style="margin:0; color:#64748b;">If the app locks up, restart it, then open the latest log and search for <b>Poll error</b>, <b>Connect failed</b>, <b>Command timeout</b>, or <b>No GSP response</b>.</p>
           </div>
         </div>
         <div class="obsSettingsRow" style="align-items: center;">
@@ -2501,18 +2502,23 @@
     }
   }
 
-  async function runSwitcherBarAction(optimisticFn, apiFn, pendingKey, pendingValue) {
+  function runSwitcherBarAction(optimisticFn, apiFn, pendingKey, pendingValue) {
     if (switcherBarBusy) return;
     if (!requireSwitcherConnected()) return;
     if (pendingKey != null) setStreamBarPending(pendingKey, pendingValue);
     if (typeof optimisticFn === "function") optimisticFn();
     switcherBarBusy = true;
-    try {
-      await apiFn();
-    } finally {
-      switcherBarBusy = false;
-      scheduleStreamBarPoll();
-    }
+    Promise.resolve()
+      .then(function () {
+        return apiFn();
+      })
+      .catch(function (e) {
+        showStreamError(e);
+      })
+      .finally(function () {
+        switcherBarBusy = false;
+        scheduleStreamBarPoll();
+      });
   }
 
   function applySimpleMode(on) {
@@ -2568,18 +2574,21 @@
     }
   }
 
-  async function simpleModeSwitch() {
+  function simpleModeSwitch() {
     const other = state.currentLiveCam === "cam1" ? "cam2" : "cam1";
-    try {
-      if (!window.pywebview?.api?.obs_cut) return;
-      status(other, "Switching...");
-      const [ok, resp] = await window.pywebview.api.obs_cut(other);
+    if (!window.pywebview?.api?.obs_cut) return;
+    status(other, "Switching...");
+    window.pywebview.api.obs_cut(other).then(function (res) {
+      const ok = res && res[0];
+      const resp = res && res[1];
       status(other, ok ? "Switch ✓" : ("Error: " + resp));
-      if (ok) applyLock(other);
-      setTimeout(pollObsStatus, 300);
-    } catch (e) {
+      if (ok) {
+        applyLock(other);
+        setTimeout(pollObsStatus, 300);
+      }
+    }).catch(function (e) {
       status(other, "Switch error: " + e);
-    }
+    });
   }
 
   function streamKeyConfigured(st) {
@@ -2977,42 +2986,48 @@
     }
   }
 
-  async function obsCut(cam) {
-    try {
-      if (!switcherConnected) {
-        showStreamToast("Switcher not connected", "error");
-        return;
-      }
-      if (!window.pywebview?.api?.obs_cut) return;
-      status(cam, "Cutting to camera...");
-      const [ok, resp] = await window.pywebview.api.obs_cut(cam);
-      status(cam, ok ? "Cut successful ✓" : ("Cut error: " + resp));
-      if (ok) applyLock(cam);
-      setTimeout(pollObsStatus, 300);
-    } catch (e) {
-      status(cam, "Cut error: " + e);
+  function obsCut(cam) {
+    if (!switcherConnected) {
+      showStreamToast("Switcher not connected", "error");
+      return;
     }
+    if (!window.pywebview?.api?.obs_cut) return;
+    status(cam, "Cutting to camera...");
+    window.pywebview.api.obs_cut(cam).then(function (res) {
+      const ok = res && res[0];
+      const resp = res && res[1];
+      status(cam, ok ? "Cut successful ✓" : ("Cut error: " + resp));
+      if (ok) {
+        applyLock(cam);
+        setTimeout(pollObsStatus, 300);
+      }
+    }).catch(function (e) {
+      status(cam, "Cut error: " + e);
+    });
   }
 
-  async function obsFade(cam) {
-    try {
-      if (!switcherConnected) {
-        showStreamToast("Switcher not connected", "error");
-        return;
-      }
-      if (isSplitviewActive()) {
-        status(cam, "AUTO disabled during splitview — use CUT");
-        return;
-      }
-      if (!window.pywebview?.api?.obs_fade) return;
-      status(cam, "Fading to camera...");
-      const [ok, resp] = await window.pywebview.api.obs_fade(cam);
-      status(cam, ok ? "Fade successful ✓" : ("Fade error: " + resp));
-      if (ok) applyLock(cam);
-      setTimeout(pollObsStatus, 400);
-    } catch (e) {
-      status(cam, "Fade error: " + e);
+  function obsFade(cam) {
+    if (!switcherConnected) {
+      showStreamToast("Switcher not connected", "error");
+      return;
     }
+    if (isSplitviewActive()) {
+      status(cam, "AUTO disabled during splitview — use CUT");
+      return;
+    }
+    if (!window.pywebview?.api?.obs_fade) return;
+    status(cam, "Fading to camera...");
+    window.pywebview.api.obs_fade(cam).then(function (res) {
+      const ok = res && res[0];
+      const resp = res && res[1];
+      status(cam, ok ? "Fade successful ✓" : ("Fade error: " + resp));
+      if (ok) {
+        applyLock(cam);
+        setTimeout(pollObsStatus, 400);
+      }
+    }).catch(function (e) {
+      status(cam, "Fade error: " + e);
+    });
   }
 
 

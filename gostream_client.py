@@ -176,10 +176,23 @@ class GoStreamClient:
         self._multisource_window1_src: Optional[int] = None
         self._multisource_window2_src: Optional[int] = None
         self._on_command: Optional[Callable[[dict[str, Any]], None]] = None
+        self._last_recv_at: float = 0.0
 
     @property
     def connected(self) -> bool:
         return self._connected and self._sock is not None
+
+    def seconds_since_last_recv(self) -> float:
+        """Seconds since any GSP response was parsed; inf if never."""
+        if self._last_recv_at <= 0:
+            return float("inf")
+        return max(0.0, time.monotonic() - self._last_recv_at)
+
+    def recv_is_stale(self, max_age_s: float) -> bool:
+        """True when connected but no GSP traffic received recently."""
+        if not self.connected:
+            return True
+        return self.seconds_since_last_recv() > float(max_age_s)
 
     @property
     def pgm_src(self) -> Optional[int]:
@@ -257,6 +270,7 @@ class GoStreamClient:
         sock.settimeout(0.5)
         self._sock = sock
         self._connected = True
+        self._last_recv_at = time.monotonic()
         self._stop.clear()
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._recv_thread.start()
@@ -265,6 +279,7 @@ class GoStreamClient:
     def disconnect(self) -> None:
         self._stop.set()
         self._connected = False
+        self._last_recv_at = 0.0
         if self._sock:
             try:
                 self._sock.shutdown(socket.SHUT_RDWR)
@@ -556,6 +571,7 @@ class GoStreamClient:
         time.sleep(0.15)
 
     def _handle_command(self, cmd: dict[str, Any]) -> None:
+        self._last_recv_at = time.monotonic()
         cmd_id = cmd.get("id")
         val = cmd.get("value")
         if not isinstance(val, list) or not val:
