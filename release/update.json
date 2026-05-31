@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.26/PTZ-Control.exe",
-    "sha256":  "3f8cc85d1b87e2d9af48f53de973025a1c9b51a9b2fd111b1a366dc2ce62f0d7",
-    "version":  "3.26",
-    "release_notes":  "Fix startup crash: bundle app_log module for PyInstaller (v3.25 regressed)."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.27/PTZ-Control.exe",
+    "sha256":  "3deef1eac0cf15a6e34dc75ffd41f774b7de883fdb1d024351ac27393f56ce4a",
+    "version":  "3.27",
+    "release_notes":  "Restore v3.22 switcher connect behavior; fix v3.23 worker/reconnect races; poll throttle; MIDI retry UI; logging fixes."
 }
