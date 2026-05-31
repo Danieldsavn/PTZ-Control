@@ -6,6 +6,11 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 _icon_path = os.path.join(SPECPATH, 'icon.ico.ico')
 
 _hidden = [
+    'app_log',
+    'gostream_client',
+    'midi_manager',
+    'preview_server',
+    'update_checker',
     'mido.backends.rtmidi',
     'rtmidi',
     '_cffi_backend',

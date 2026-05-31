@@ -84,6 +84,7 @@ from preview_server import (
     start_preview_server,
     stop_all_previews,
 )
+import app_log
 from midi_manager import (
     MidiManager,
     list_input_devices,
@@ -100,7 +101,6 @@ from update_checker import (
     running_exe_path,
     write_update_job,
 )
-import app_log
 
 # ---- Camera config ----
 CAMERAS = {
