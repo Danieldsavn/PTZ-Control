@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
-$Version = "3.24"
+$Version = "3.25"
 Write-Host "Building PTZ-Control v$Version"
 
 # Sync version.json
@@ -48,7 +48,7 @@ $manifest = @{
     version       = $Version
     download_url  = "https://github.com/Danieldsavn/PTZ-Control/releases/download/v$Version/PTZ-Control.exe"
     sha256        = $hash
-    release_notes = "Fix startup: bundled switcher setup (USK, multisource, DSK, stream) so splash steps are not skipped."
+    release_notes = "Restore v3.22 switcher connect on startup; fix false disconnect from stale GSP detection."
 } | ConvertTo-Json -Depth 3
 $manifest | Set-Content -Path "release\update.json" -Encoding UTF8
 Write-Host "Wrote release\update.json"

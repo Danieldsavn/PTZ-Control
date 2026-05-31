@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.24/PTZ-Control.exe",
-    "sha256":  "6beb389275a34e22fa07b543abb46a2e8796b2c7bd3034ef0ac0c4ea2bc422e9",
-    "version":  "3.24",
-    "release_notes":  "Fix startup: bundled switcher setup (USK, multisource, DSK, stream) so splash steps are not skipped."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.25/PTZ-Control.exe",
+    "sha256":  "9c0d557536eb93fc3e99e7f71629a7e4ba3df0fba951efadb34e73cf33ab9bfb",
+    "version":  "3.25",
+    "release_notes":  "Restore v3.22 switcher connect on startup; fix false disconnect from stale GSP detection."
 }

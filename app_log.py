@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime
 from typing import Any, Optional
@@ -22,6 +24,22 @@ _session_path: Optional[str] = None
 _started = False
 
 _LEVELS = {"DEBUG", "INFO", "WARN", "ERROR"}
+
+# Log retention (pruned on each new session)
+MAX_LOG_SESSIONS = 5
+MAX_LOG_FILE_BYTES = 10 * 1024 * 1024
+
+# High-frequency API polls — log returns at most every N seconds unless state changes
+_POLL_API_METHODS = frozenset({"obs_get_status", "switcher_get_status"})
+_POLL_API_LOG_INTERVAL_S = 30.0
+_last_poll_api_log: dict[str, float] = {}
+_last_poll_api_fingerprint: dict[str, str] = {}
+
+_SENSITIVE_KEY_RE = re.compile(
+    r"(stream.*key|rtmp|password|secret|token|api_?key)",
+    re.IGNORECASE,
+)
+_RESTREAM_KEY_RE = re.compile(r"re_[A-Za-z0-9]{8,}")
 
 
 def _default_log_root() -> str:
@@ -62,10 +80,39 @@ def configure(
         _log_dir = log_dir_override
 
 
+def redact_sensitive(value: Any) -> Any:
+    """Mask stream keys and similar secrets before writing logs."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if _RESTREAM_KEY_RE.search(value):
+            return _RESTREAM_KEY_RE.sub("re_…redacted", value)
+        if len(value) > 48 and value.isalnum():
+            return value[:4] + "…" + value[-4:]
+        return value
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            key = str(k)
+            if _SENSITIVE_KEY_RE.search(key):
+                if isinstance(v, str) and v.strip():
+                    s = v.strip()
+                    out[key] = (s[:4] + "…" + s[-4:]) if len(s) > 12 else "…"
+                else:
+                    out[key] = v
+            else:
+                out[key] = redact_sensitive(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [redact_sensitive(v) for v in value]
+    return value
+
+
 def _format_detail(detail: Any) -> str:
     if detail is None:
         return ""
     try:
+        detail = redact_sensitive(detail)
         if isinstance(detail, str):
             text = detail
         else:
@@ -75,6 +122,96 @@ def _format_detail(detail: Any) -> str:
     if len(text) > 2000:
         text = text[:2000] + "…"
     return text
+
+
+def _poll_status_fingerprint(result: Any) -> str:
+    if not isinstance(result, tuple) or len(result) < 2:
+        return ""
+    payload = result[1]
+    if not isinstance(payload, dict):
+        return str(payload)[:120]
+    keys = (
+        "connected",
+        "pgmInput",
+        "pvwInput",
+        "usk1On",
+        "dsk1On",
+        "splitviewOn",
+        "streamLive",
+        "stream2Live",
+        "mp1StillIndex",
+    )
+    return json.dumps({k: payload.get(k) for k in keys}, sort_keys=True, default=str)
+
+
+def should_log_api_call(method: str, phase: str) -> bool:
+    if method in _POLL_API_METHODS:
+        return False
+    if method == "set_camera_title":
+        return False
+    return True
+
+
+def should_log_api_return(method: str, result: Any) -> bool:
+    if method not in _POLL_API_METHODS:
+        return True
+    fp = _poll_status_fingerprint(result)
+    now = time.monotonic()
+    with _lock:
+        last_fp = _last_poll_api_fingerprint.get(method)
+        last_ts = _last_poll_api_log.get(method, 0.0)
+        if fp != last_fp:
+            _last_poll_api_fingerprint[method] = fp
+            _last_poll_api_log[method] = now
+            return True
+        if now - last_ts >= _POLL_API_LOG_INTERVAL_S:
+            _last_poll_api_log[method] = now
+            return True
+    return False
+
+
+def safe_api_args(args: tuple, kwargs: dict) -> dict:
+    out: dict[str, Any] = {}
+    if args:
+        out["args"] = redact_sensitive([str(a)[:200] for a in args[:6]])
+    if kwargs:
+        out["kwargs"] = redact_sensitive(
+            {k: str(v)[:200] for k, v in list(kwargs.items())[:8]}
+        )
+    return out
+
+
+def _prune_old_sessions() -> None:
+    """Keep only the newest session logs under size/count limits."""
+    try:
+        root = log_dir()
+        names = [
+            n
+            for n in os.listdir(root)
+            if n.startswith("PTZ-Control_") and n.endswith(".log")
+        ]
+        paths = [os.path.join(root, n) for n in names]
+        paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        for path in paths[MAX_LOG_SESSIONS:]:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        for path in paths[:MAX_LOG_SESSIONS]:
+            try:
+                if os.path.getsize(path) > MAX_LOG_FILE_BYTES:
+                    with open(path, "rb") as f:
+                        f.seek(-MAX_LOG_FILE_BYTES, os.SEEK_END)
+                        tail = f.read()
+                    with open(path, "wb") as f:
+                        f.write(
+                            b"... [log truncated — size cap]\n".encode("utf-8")
+                            + tail
+                        )
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 
 def write(
@@ -112,6 +249,7 @@ def start_session() -> str:
         if _started and _session_path:
             return _session_path
         os.makedirs(log_dir(), exist_ok=True)
+        _prune_old_sessions()
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         _session_path = os.path.join(log_dir(), f"PTZ-Control_{stamp}.log")
         _started = True
@@ -186,6 +324,7 @@ def exception(category: str, message: str, exc: BaseException | None = None) -> 
 
 def summarize_api_result(result: Any) -> Any:
     """Trim API return values for log lines."""
+    result = redact_sensitive(result)
     if isinstance(result, tuple) and len(result) >= 2:
         ok, payload = result[0], result[1]
         if isinstance(payload, dict):

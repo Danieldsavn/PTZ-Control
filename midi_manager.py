@@ -37,6 +37,7 @@ SCENES: dict[str, dict[str, str]] = {
 NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 LEARN_TIMEOUT_SEC = 15.0
+MIDI_RETRY_INTERVAL_S = 45.0
 
 _mido_backend_ready = False
 
@@ -153,6 +154,8 @@ class MidiManager:
         self._midi_cfg = normalize_midi_config({})
         self._active_notes: set[int] = set()
         self._last_trigger_at: dict[int, float] = {}
+        self._last_open_error: str = ""
+        self._retry_thread: Optional[threading.Thread] = None
         self.reload_config()
         self.start()
 
@@ -222,7 +225,8 @@ class MidiManager:
             "learn_expires_at": learn_expires_at,
             "learn_timeout_sec": int(LEARN_TIMEOUT_SEC),
             "last_learned": last,
-            "listening": self._listener_alive(),
+            "listening": self._listener_alive() and self._port is not None,
+            "listener_error": self._last_open_error,
         }
 
     def set_device(self, device_name: str) -> tuple[bool, str]:
@@ -324,6 +328,22 @@ class MidiManager:
     def start(self) -> None:
         self._stop.clear()
         self._restart_listener()
+        if self._retry_thread is None or not self._retry_thread.is_alive():
+            self._retry_thread = threading.Thread(
+                target=self._retry_loop, name="MidiRetry", daemon=True
+            )
+            self._retry_thread.start()
+
+    def _retry_loop(self) -> None:
+        while not self._stop.wait(MIDI_RETRY_INTERVAL_S):
+            with self._lock:
+                device = (self._midi_cfg.get("device") or "").strip()
+            if not device:
+                continue
+            if self._listener_alive() and self._port is not None:
+                continue
+            app_log.midi("Retrying MIDI listener", {"device": device})
+            self._restart_listener()
 
     def shutdown(self) -> None:
         self._stop.set()
@@ -365,8 +385,10 @@ class MidiManager:
         _ensure_mido_backend()
         try:
             port = mido.open_input(device_name)
+            self._last_open_error = ""
             app_log.midi("Listener started", {"device": device_name})
         except Exception as e:
+            self._last_open_error = str(e)
             app_log.midi("Listener open failed", {"device": device_name, "error": str(e)})
             return
         self._port = port

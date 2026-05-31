@@ -786,12 +786,14 @@ class SwitcherManager:
         self._test_stream_saved_stream1_enable: bool | None = None
         self._cmd_queue: queue.Queue = queue.Queue()
         self._cmd_worker_busy = False
+        self._cmd_epoch = 0
         self._cmd_thread = threading.Thread(
             target=self._command_worker, name="SwitcherCommandWorker", daemon=True
         )
         self._cmd_thread.start()
         self._ensure_polling()
-        self._kick_reconnect()
+        # v3.22: block until first TCP connect attempt finishes (do not rely on poll alone)
+        self._try_connect()
 
     def _command_worker(self) -> None:
         """Run blocking switcher commands off the pywebview API thread."""
@@ -800,15 +802,48 @@ class SwitcherManager:
             try:
                 if item is None:
                     return
-                fut, fn, name = item
+                fut, fn, name, epoch = item
+                if epoch < self._cmd_epoch:
+                    app_log.switcher(
+                        "Skipping stale queued command",
+                        {"name": name, "epoch": epoch},
+                    )
+                    if not fut.done():
+                        fut.cancel()
+                    continue
                 self._cmd_worker_busy = True
                 if not fut.set_running_or_notify():
                     pass
+                t0 = time.monotonic()
+                app_log.switcher("Command start", {"name": name})
                 try:
                     result = fn()
-                    fut.set_result(result)
+                    if epoch < self._cmd_epoch:
+                        app_log.switcher(
+                            "Dropped stale command result",
+                            {
+                                "name": name,
+                                "duration_s": round(time.monotonic() - t0, 3),
+                            },
+                        )
+                    elif not fut.done():
+                        fut.set_result(result)
                 except Exception as exc:
-                    fut.set_exception(exc)
+                    if epoch >= self._cmd_epoch and not fut.done():
+                        fut.set_exception(exc)
+                    elif epoch < self._cmd_epoch:
+                        app_log.switcher(
+                            "Dropped stale command error",
+                            {"name": name, "error": str(exc)},
+                        )
+                finally:
+                    app_log.switcher(
+                        "Command end",
+                        {
+                            "name": name,
+                            "duration_s": round(time.monotonic() - t0, 3),
+                        },
+                    )
             finally:
                 self._cmd_worker_busy = False
                 self._cmd_queue.task_done()
@@ -816,7 +851,9 @@ class SwitcherManager:
     def _enqueue_worker(self, fn: Callable[[], Any], *, name: str) -> None:
         """Queue switcher work without blocking the caller (poll thread, connect, etc.)."""
         fut: Future = Future()
-        self._cmd_queue.put((fut, fn, name))
+        with self._lock:
+            epoch = self._cmd_epoch
+        self._cmd_queue.put((fut, fn, name, epoch))
 
     def run_on_worker(
         self,
@@ -831,11 +868,17 @@ class SwitcherManager:
             if timeout_s is not None
             else SWITCHER_COMMAND_TIMEOUT_S
         )
+        with self._lock:
+            epoch = self._cmd_epoch
         fut: Future = Future()
-        self._cmd_queue.put((fut, fn, name))
+        self._cmd_queue.put((fut, fn, name, epoch))
         try:
             return fut.result(timeout=deadline)
         except TimeoutError:
+            with self._lock:
+                self._cmd_epoch += 1
+            if not fut.done():
+                fut.cancel()
             app_log.switcher(
                 "Command timeout (watchdog)",
                 {"name": name, "timeout_s": deadline},
@@ -960,6 +1003,19 @@ class SwitcherManager:
                 self._client.disconnect()
                 return False
         self._refresh_status_cache()
+        # v3.22: initial bus setup on the connect path (not via command worker)
+        try:
+            self.configure_multisource_layout()
+        except Exception:
+            pass
+        try:
+            self.apply_usk1_defaults()
+        except Exception:
+            pass
+        try:
+            self.apply_dsk1_defaults()
+        except Exception:
+            pass
         app_log.switcher("Connected", {"host": host, "port": port})
         return True
 
@@ -1038,21 +1094,21 @@ class SwitcherManager:
             time.sleep(0.1)
             fill, key_src = self._usk1_target_sources()
             if not self._client.usk1_luma_matches(fill, key_src):
-                self._enqueue_worker(
-                    lambda: self.apply_usk1_defaults(),
-                    name="usk_verify",
-                )
+                self.apply_usk1_defaults()
         except Exception:
             pass
 
     def wait_for_connected(self, timeout_s: float = 3.0) -> bool:
-        self._kick_reconnect()
+        if self._connected and self._client.connected:
+            return True
+        self._reconnect()
         deadline = time.monotonic() + max(0.1, float(timeout_s))
         while time.monotonic() < deadline:
             if self._connected and self._client.connected:
                 return True
             if not self._host_configured():
                 return False
+            self._schedule_reconnect()
             time.sleep(0.25)
         return bool(self._connected and self._client.connected)
 
@@ -1122,16 +1178,8 @@ class SwitcherManager:
                     self._client.send_get(
                         "multiSourceWindowSource", [MULTISOURCE_WINDOW_2_ID]
                     )
-                stale = (
-                    not self._cmd_worker_busy
-                    and self._client.recv_is_stale(GSP_RECV_STALE_S)
-                )
-                if stale or not ok_pgm or not ok_pvw or not ok_live:
-                    if stale:
-                        app_log.switcher(
-                            "No GSP response (stale)",
-                            {"age_s": round(self._client.seconds_since_last_recv(), 2)},
-                        )
+                # v3.22 health: failed sends only (stale recv caused false disconnects)
+                if not ok_pgm or not ok_pvw or not ok_live:
                     self._poll_failures += 1
                     if self._poll_failures >= SWITCHER_POLL_FAIL_DISCONNECT:
                         self._mark_disconnected()
@@ -2564,12 +2612,7 @@ class Api:
 
 
 def _safe_log_args(args: tuple, kwargs: dict) -> dict:
-    out: dict = {}
-    if args:
-        out["args"] = [str(a)[:200] for a in args[:6]]
-    if kwargs:
-        out["kwargs"] = {k: str(v)[:200] for k, v in list(kwargs.items())[:8]}
-    return out
+    return app_log.safe_api_args(args, kwargs)
 
 
 def _instrument_api_methods() -> None:
@@ -2630,14 +2673,16 @@ def _instrument_api_methods() -> None:
         def make_wrapper(method_name: str, impl):
             @functools.wraps(impl)
             def wrapped(*args, **kwargs):
-                app_log.api(method_name, "call", _safe_log_args(args, kwargs))
+                if app_log.should_log_api_call(method_name, "call"):
+                    app_log.api(method_name, "call", _safe_log_args(args, kwargs))
                 try:
                     result = impl(*args, **kwargs)
-                    app_log.api(
-                        method_name,
-                        "return",
-                        app_log.summarize_api_result(result),
-                    )
+                    if app_log.should_log_api_return(method_name, result):
+                        app_log.api(
+                            method_name,
+                            "return",
+                            app_log.summarize_api_result(result),
+                        )
                     return result
                 except Exception as e:
                     app_log.api(method_name, "error", {"error": str(e)})
