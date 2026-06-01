@@ -1,6 +1,6 @@
 ﻿{
-    "download_url": "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.22/PTZ-Control.exe",
-    "sha256": "f970942b65154d5d292b3df2c883603c2aab989ee707de61c26acd68b2b54eab",
-    "version": "3.22",
-    "release_notes": "Start maximized; larger camera previews (+20%)."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.29/PTZ-Control.exe",
+    "sha256":  "10eb7aaf2374ed53c3827ce6b2643fed535c7703ebbda31449d46ad85f17707f",
+    "version":  "3.29",
+    "release_notes":  "v3.22-speed switcher path (no worker queue); stream bar toggles for Lyrics/Title/Splitview; Full Screen Slide button."
 }
