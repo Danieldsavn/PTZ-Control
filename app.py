@@ -2,7 +2,7 @@ import os
 import re
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Callable
 
 # PyWebView uses pythonnet/Edge; configure before webview import (critical for frozen restart).
 if sys.platform == "win32":
@@ -85,6 +85,7 @@ from preview_server import (
 import app_log
 from midi_manager import (
     MidiManager,
+    SCENES as MIDI_SCENES,
     list_input_devices,
     midi_available,
     normalize_midi_config,
@@ -867,7 +868,10 @@ class SwitcherManager:
                 "stream1Key": self._client.stream1_rtmp_key or self._config.get("stream1_key", ""),
                 "stream2Live": self._client.stream2_output_live,
                 "splitviewOn": self._client.pgm_src == SOURCE_MULTI,
-                "fullScreenSlideOn": self._god_bless_active,
+                "fullScreenSlideOn": (
+                    self._client.pgm_src == SOURCE_IN3
+                    and self._client.pgm_src != SOURCE_MULTI
+                ),
                 "mp1StillIndex": self._client.mp1_still_index,
             })
 
@@ -1533,6 +1537,69 @@ class SwitcherManager:
         except Exception as e:
             return False, f"Splitview Off error: {e}"
 
+    def _full_screen_slide_source(self) -> int:
+        return int(self._config.get("full_screen_slide_source", SOURCE_IN3))
+
+    def full_screen_slide_on(self) -> tuple[bool, str]:
+        """AUTO mix to Input 3 (slide); splitview off; neither camera on program."""
+        if not self._ensure_connected():
+            return False, "Switcher not connected (reconnecting…)"
+        slide_src = self._full_screen_slide_source()
+        auto_rate = float(self._config.get("camera_mix_rate_seconds", 1.0))
+        sv_rate = float(self._config.get("splitview_mix_rate_seconds", 1.0))
+        try:
+            self.exit_god_bless_if_active()
+            pgm = self._client.pgm_src
+            if pgm == slide_src and pgm != SOURCE_MULTI:
+                return True, "Full Screen Slide already on (Input 3)"
+            if pgm == SOURCE_MULTI or self._client.multisource_enabled:
+                if not self._client.splitview_off(slide_src, rate_seconds=sv_rate):
+                    return False, "Failed to turn off splitview for Full Screen Slide"
+                time.sleep(max(0.08, sv_rate * 0.12))
+            elif pgm != slide_src:
+                if not self._client.fade_to_source(slide_src, rate_seconds=auto_rate):
+                    return False, "Failed AUTO transition to Full Screen Slide (Input 3)"
+                time.sleep(max(0.08, auto_rate * 0.12))
+            self._client.send_get("pgmIndex")
+            self._client.send_get("pvwIndex")
+            self._refresh_status_cache()
+            return True, "Full Screen Slide on (Input 3)"
+        except Exception as e:
+            return False, f"Full Screen Slide error: {e}"
+
+    def full_screen_slide_off(self) -> tuple[bool, str]:
+        """AUTO back to the last live camera."""
+        if not self._ensure_connected():
+            return False, "Switcher not connected (reconnecting…)"
+        slide_src = self._full_screen_slide_source()
+        auto_rate = float(self._config.get("camera_mix_rate_seconds", 1.0))
+        try:
+            self.exit_god_bless_if_active()
+            pgm = self._client.pgm_src
+            if pgm != slide_src or pgm == SOURCE_MULTI:
+                return True, "Full Screen Slide already off"
+            cam = self._last_live_cam or "cam1"
+            target = self._sdi_for_cam(cam)
+            if not self._client.fade_to_source(target, rate_seconds=auto_rate):
+                return False, "Failed AUTO transition from Full Screen Slide"
+            time.sleep(max(0.08, auto_rate * 0.12))
+            self._client.send_get("pgmIndex")
+            self._client.send_get("pvwIndex")
+            self._refresh_status_cache()
+            return True, "Full Screen Slide off"
+        except Exception as e:
+            return False, f"Full Screen Slide error: {e}"
+
+    def full_screen_slide(self) -> tuple[bool, str]:
+        """Toggle Full Screen Slide (UI button)."""
+        if not self._ensure_connected():
+            return False, "Switcher not connected (reconnecting…)"
+        slide_src = self._full_screen_slide_source()
+        pgm = self._client.pgm_src
+        if pgm == slide_src and pgm != SOURCE_MULTI:
+            return self.full_screen_slide_off()
+        return self.full_screen_slide_on()
+
     def cut_camera(self, cam_key):
         if not self._ensure_connected():
             return False, "Switcher not connected (reconnecting…)"
@@ -1621,26 +1688,50 @@ def _save_midi_config_section(midi_cfg: dict) -> None:
     _save_switcher_config(data)
 
 
-def _midi_trigger_scene(scene_id: str) -> None:
-    app_log.midi("Trigger scene", {"scene": scene_id})
+def _notify_midi_propresenter_ui(cue_id: str) -> None:
+    """Sync stream bar / camera UI and show ProPresenter indicator."""
+    global _app_window
+    win = _app_window
+    if not win:
+        return
     try:
-        sm = _get_switcher_manager()
-        if scene_id == "god_bless_screen":
-            sm.god_bless_screen()
-            return
-        sm.exit_god_bless_if_active()
-        if scene_id == "full_screen_camera":
-            sm.usk1_set(False)
-            sm.splitview_off()
-            return
-        if scene_id == "splitview":
-            sm.splitview_on()
-            return
-        if scene_id == "camera_plus_lyrics":
-            sm.splitview_off()
-            sm.usk1_set(True)
+        payload = json.dumps(str(cue_id))
+        win.evaluate_js(
+            "window.handleMidiProPresenterCue && "
+            f"window.handleMidiProPresenterCue({payload});"
+        )
     except Exception as e:
-        app_log.midi("Trigger failed", {"scene": scene_id, "error": str(e)})
+        app_log.midi("UI notify failed", {"cue": cue_id, "error": str(e)})
+
+
+def _midi_trigger_scene(scene_id: str) -> None:
+    meta = MIDI_SCENES.get(scene_id, {})
+    label = meta.get("label", scene_id)
+    app_log.midi("Trigger cue", {"cue": scene_id, "label": label})
+    sm = _get_switcher_manager()
+    handlers: dict[str, Callable[[], Any]] = {
+        "lyrics_on": lambda: sm.usk1_set(True),
+        "lyrics_off": lambda: sm.usk1_set(False),
+        "title_on": lambda: sm.dsk1_set(True),
+        "title_off": lambda: sm.dsk1_set(False),
+        "splitview_on": lambda: sm.splitview_on(),
+        "splitview_off": lambda: sm.splitview_off(),
+        "cam1_cut": lambda: sm.cut_camera("cam1"),
+        "cam2_cut": lambda: sm.cut_camera("cam2"),
+        "still_sid": lambda: sm.activate_still(1),
+        "still_nate": lambda: sm.activate_still(2),
+        "still_cecil": lambda: sm.activate_still(3),
+        "full_screen_slide_auto": lambda: sm.full_screen_slide_on(),
+    }
+    handler = handlers.get(scene_id)
+    if not handler:
+        app_log.midi("Unknown MIDI cue", {"cue": scene_id})
+        return
+    try:
+        handler()
+        _notify_midi_propresenter_ui(scene_id)
+    except Exception as e:
+        app_log.midi("Trigger failed", {"cue": scene_id, "error": str(e)})
 
 
 def _get_midi_manager() -> MidiManager:
@@ -2240,7 +2331,7 @@ class Api:
 
     def switcher_full_screen_slide(self):
         try:
-            return _get_switcher_manager().god_bless_screen()
+            return _get_switcher_manager().full_screen_slide()
         except Exception as e:
             return False, f"switcher_full_screen_slide error: {e}"
 

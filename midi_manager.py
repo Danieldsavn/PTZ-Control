@@ -1,5 +1,5 @@
 """
-MIDI input (receive-only) — map note-on messages to switcher scene actions.
+MIDI input (receive-only) — map note-on messages to switcher cues (ProPresenter).
 """
 from __future__ import annotations
 
@@ -15,23 +15,64 @@ try:
 except ImportError:
     mido = None  # type: ignore
 
+# Order shown in Settings → MIDI
 SCENES: dict[str, dict[str, str]] = {
-    "full_screen_camera": {
-        "label": "Full Screen Camera",
-        "description": "Splitview off, Lyrics off",
+    "lyrics_on": {
+        "label": "Lyrics On",
+        "description": "Upstream key (lyrics) on",
     },
-    "splitview": {
-        "label": "Splitview",
-        "description": "Splitview on",
+    "lyrics_off": {
+        "label": "Lyrics Off",
+        "description": "Upstream key (lyrics) off",
     },
-    "camera_plus_lyrics": {
-        "label": "Camera plus Lyrics",
-        "description": "Lyrics on, Splitview off",
+    "title_on": {
+        "label": "Title On",
+        "description": "Downstream key (title) on",
     },
-    "god_bless_screen": {
-        "label": "God Bless Screen",
-        "description": "Still 5 full screen; Cut/Stills/Title restore prior still",
+    "title_off": {
+        "label": "Title Off",
+        "description": "Downstream key (title) off",
     },
+    "splitview_on": {
+        "label": "Splitview On",
+        "description": "Multisource splitview on",
+    },
+    "splitview_off": {
+        "label": "Splitview Off",
+        "description": "Multisource splitview off",
+    },
+    "cam1_cut": {
+        "label": "Camera 1 Cut",
+        "description": "Cut program to Camera 1",
+    },
+    "cam2_cut": {
+        "label": "Camera 2 Cut",
+        "description": "Cut program to Camera 2",
+    },
+    "still_sid": {
+        "label": "Sid",
+        "description": "Media player still 1 (Sid)",
+    },
+    "still_nate": {
+        "label": "Nate",
+        "description": "Media player still 2 (Nate)",
+    },
+    "still_cecil": {
+        "label": "Cecil",
+        "description": "Media player still 3 (Cecil)",
+    },
+    "full_screen_slide_auto": {
+        "label": "Full Screen Slide (Auto)",
+        "description": "AUTO to Input 3; splitview off; neither camera live",
+    },
+}
+
+# v3.29 and earlier composite scenes → best-effort note migration
+_LEGACY_SCENE_NOTE_MAP: dict[str, str] = {
+    "splitview": "splitview_on",
+    "god_bless_screen": "full_screen_slide_auto",
+    "camera_plus_lyrics": "lyrics_on",
+    "full_screen_camera": "splitview_off",
 }
 
 NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
@@ -101,6 +142,17 @@ def normalize_midi_config(raw: Any) -> dict[str, Any]:
                     notes[scene_id] = n if 0 <= n <= 127 else None
                 except (TypeError, ValueError):
                     notes[scene_id] = None
+        for old_id, new_id in _LEGACY_SCENE_NOTE_MAP.items():
+            if new_id not in SCENES:
+                continue
+            legacy_val = notes_in.get(old_id)
+            if legacy_val is None or notes.get(new_id) is not None:
+                continue
+            try:
+                n = int(legacy_val)
+                notes[new_id] = n if 0 <= n <= 127 else None
+            except (TypeError, ValueError):
+                pass
     return {"device": device, "notes": notes}
 
 
@@ -131,7 +183,7 @@ def _note_press(msg: Any, active_notes: set[int]) -> Optional[int]:
 
 
 class MidiManager:
-    """Listen for MIDI note-on and trigger mapped switcher scenes."""
+    """Listen for MIDI note-on and trigger mapped switcher cues."""
 
     def __init__(
         self,
@@ -242,7 +294,7 @@ class MidiManager:
 
     def set_note(self, scene_id: str, note: Optional[int]) -> tuple[bool, str]:
         if scene_id not in SCENES:
-            return False, f"Unknown scene: {scene_id}"
+            return False, f"Unknown cue: {scene_id}"
         if note is not None and not (0 <= int(note) <= 127):
             return False, "Note must be 0–127"
         with self._lock:
@@ -254,7 +306,7 @@ class MidiManager:
         if not midi_available():
             return False, "MIDI not available (install mido and python-rtmidi)"
         if scene_id not in SCENES:
-            return False, f"Unknown scene: {scene_id}"
+            return False, f"Unknown cue: {scene_id}"
         self._disarm_learn_timer()
         with self._lock:
             if self._learn_scene == scene_id:
@@ -453,8 +505,12 @@ class MidiManager:
                     break
         if scene_to_run:
             app_log.midi(
-                "Note press → scene",
-                {"note": note, "scene": scene_to_run},
+                "Note press → cue",
+                {
+                    "note": note,
+                    "scene": scene_to_run,
+                    "label": SCENES[scene_to_run]["label"],
+                },
             )
             threading.Thread(
                 target=self._run_scene_safe,
@@ -468,6 +524,6 @@ class MidiManager:
         except Exception as exc:
             app_log.exception(
                 "MIDI",
-                f"Scene {scene_id} (note {note}) failed",
+                f"Cue {scene_id} (note {note}) failed",
                 exc,
             )

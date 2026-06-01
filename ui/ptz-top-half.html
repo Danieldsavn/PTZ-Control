@@ -1380,6 +1380,28 @@
       color: #64748b;
     }
     #midiStatusLine.warn { color: #b45309; }
+    .midiProPresenterIndicator {
+      position: fixed;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10050;
+      padding: 5px 14px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: #1e3a8a;
+      background: rgba(255, 255, 255, 0.95);
+      border: 1px solid #93c5fd;
+      box-shadow: 0 2px 10px rgba(30, 64, 175, 0.15);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    .midiProPresenterIndicator.visible {
+      opacity: 1;
+    }
   </style>
 </head>
 
@@ -1419,6 +1441,7 @@
     </div>
   </div>
   <div id="streamStopConfirm" class="streamStopConfirmOverlay" aria-hidden="true">
+    <div id="midiProPresenterIndicator" class="midiProPresenterIndicator" aria-live="polite">Received MIDI note from ProPresenter</div>
     <div class="streamStopConfirmBackdrop" onclick="closeStreamStopConfirm()" aria-hidden="true"></div>
     <div class="streamStopConfirmModal" role="alertdialog" aria-modal="true" aria-labelledby="streamStopConfirmTitle" aria-describedby="streamStopConfirmMessage">
       <div class="streamStopConfirmBody">
@@ -1488,7 +1511,7 @@
         <span class="streamToggleState" id="splitviewToggleState">Off</span>
         <div class="toggleSwitch streamToggleSwitch" id="splitviewToggle" aria-hidden="true"></div>
       </div>
-      <button type="button" class="ghost keyBtn fullScreenSlideBtn" id="fullScreenSlideBtn" onclick="fullScreenSlide()">Full Screen Slide</button>
+      <button type="button" class="ghost keyBtn fullScreenSlideBtn" id="fullScreenSlideBtn" onclick="fullScreenSlide()" title="Program Input 3 (slide). Turns off splitview; neither camera is live. Press again to return to the last camera.">Full Screen Slide</button>
       <span class="streamBarSectionGap" aria-hidden="true"></span>
       <span class="streamLabel">Stream</span>
       <button type="button" class="primary goLive" id="streamGoLiveBtn" onclick="streamGoLive()">Go Live</button>
@@ -1732,14 +1755,14 @@
       </div>
 
       <div id="settingsTabPanelMidi" class="settingsTabPanel">
-        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Receive-only MIDI — assign a note to each scene. Press <b>Learn</b>, then play a note within <b>15 seconds</b>. Click <b>Learn</b> on another row to switch, or <b>Cancel learning</b> to stop.</p>
+        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Receive-only MIDI from ProPresenter — assign one note per cue (Lyrics/Title/Splitview on &amp; off, Camera cuts, Stills, Full Screen Slide AUTO). Press <b>Learn</b>, then play a note within <b>15 seconds</b>.</p>
         <p id="midiStatusLine" class="small">Loading MIDI…</p>
         <button type="button" class="ghost" id="midiCancelLearnBtn" style="display:none; margin:0 0 12px 0;" onclick="midiCancelLearn()">Cancel learning</button>
         <div class="obsSettingsRow">
           <label>MIDI input device</label>
           <select id="midiDeviceSelect" style="flex:1; max-width:420px; padding:8px; border-radius:6px; border:1px solid #cbd5e1;"></select>
         </div>
-        <table class="midiMapTable" aria-label="MIDI scene mappings">
+        <table class="midiMapTable" aria-label="MIDI cue mappings">
           <thead>
             <tr>
               <th>Scene</th>
@@ -1872,6 +1895,7 @@
   const STREAM_BAR_POLL_DELAY_MS = 1400;
   let streamBarPending = {};
   let streamBarPollDebounceTimer = null;
+  let midiProPresenterIndicatorTimer = null;
 
   function setStreamBarPending(key, value) {
     streamBarPending[key] = { value: value, until: Date.now() + STREAM_BAR_PENDING_MS };
@@ -1932,6 +1956,76 @@
   function showStreamError(msg) {
     showStreamToast(msg, "error");
   }
+
+  function showMidiProPresenterIndicator() {
+    const el = document.getElementById("midiProPresenterIndicator");
+    if (!el) return;
+    el.classList.add("visible");
+    if (midiProPresenterIndicatorTimer) clearTimeout(midiProPresenterIndicatorTimer);
+    midiProPresenterIndicatorTimer = setTimeout(function () {
+      el.classList.remove("visible");
+      midiProPresenterIndicatorTimer = null;
+    }, 2800);
+  }
+
+  window.handleMidiProPresenterCue = function (actionId) {
+    showMidiProPresenterIndicator();
+    switch (actionId) {
+      case "lyrics_on":
+        setStreamBarPending("usk1On", true);
+        setLyricsUi(true);
+        break;
+      case "lyrics_off":
+        setStreamBarPending("usk1On", false);
+        setLyricsUi(false);
+        break;
+      case "title_on":
+        setStreamBarPending("dsk1On", true);
+        setTitleUi(true);
+        break;
+      case "title_off":
+        setStreamBarPending("dsk1On", false);
+        setTitleUi(false);
+        break;
+      case "splitview_on":
+        setStreamBarPending("splitviewOn", true);
+        setSplitviewUi(true);
+        break;
+      case "splitview_off":
+        setStreamBarPending("splitviewOn", false);
+        setSplitviewUi(false);
+        break;
+      case "cam1_cut":
+        status("cam1", "Cut successful ✓");
+        applyLock("cam1");
+        break;
+      case "cam2_cut":
+        status("cam2", "Cut successful ✓");
+        applyLock("cam2");
+        break;
+      case "still_sid":
+        setStreamBarPending("mp1StillIndex", 1);
+        updateStillButtons(1);
+        break;
+      case "still_nate":
+        setStreamBarPending("mp1StillIndex", 2);
+        updateStillButtons(2);
+        break;
+      case "still_cecil":
+        setStreamBarPending("mp1StillIndex", 3);
+        updateStillButtons(3);
+        break;
+      case "full_screen_slide_auto":
+        setStreamBarPending("fullScreenSlideOn", true);
+        setStreamBarPending("splitviewOn", false);
+        setFullScreenSlideUi(true);
+        setSplitviewUi(false);
+        break;
+      default:
+        break;
+    }
+    pollObsStatus();
+  };
 
   function setStreamBarToggle(wrap, stateEl, toggleEl, on) {
     const live = !!on;

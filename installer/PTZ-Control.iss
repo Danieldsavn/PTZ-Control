@@ -1,6 +1,6 @@
 ; PTZ-Control Windows installer (Inno Setup 6)
 #define MyAppName "PTZ-Control"
-#define MyAppVersion "3.29"
+#define MyAppVersion "3.30"
 #define MyAppPublisher "PTZ-Control"
 #define MyAppExeName "PTZ-Control.exe"
 #define MyAppURL "https://github.com/Danieldsavn/PTZ-Control"

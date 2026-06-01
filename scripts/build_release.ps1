@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
-$Version = "3.29"
+$Version = "3.30"
 Write-Host "Building PTZ-Control v$Version"
 
 # Sync version.json
@@ -48,7 +48,7 @@ $manifest = @{
     version       = $Version
     download_url  = "https://github.com/Danieldsavn/PTZ-Control/releases/download/v$Version/PTZ-Control.exe"
     sha256        = $hash
-    release_notes = "v3.22-speed switcher path (no worker queue); stream bar toggles for Lyrics/Title/Splitview; Full Screen Slide button."
+    release_notes = "Per-cue ProPresenter MIDI; Full Screen Slide AUTO to Input 3; stream bar toggles; direct switcher path (v3.22 speed)."
 } | ConvertTo-Json -Depth 3
 $manifest | Set-Content -Path "release\update.json" -Encoding UTF8
 Write-Host "Wrote release\update.json"
