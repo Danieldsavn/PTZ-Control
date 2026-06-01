@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.29/PTZ-Control.exe",
-    "sha256":  "10eb7aaf2374ed53c3827ce6b2643fed535c7703ebbda31449d46ad85f17707f",
-    "version":  "3.29",
-    "release_notes":  "v3.22-speed switcher path (no worker queue); stream bar toggles for Lyrics/Title/Splitview; Full Screen Slide button."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v3.30/PTZ-Control.exe",
+    "sha256":  "bc6d12d907ec4dc3257f2f19ed3f0020842ffb14af5aa218d509c5533abf6223",
+    "version":  "3.30",
+    "release_notes":  "Per-cue ProPresenter MIDI; Full Screen Slide AUTO to Input 3; stream bar toggles; direct switcher path (v3.22 speed)."
 }
