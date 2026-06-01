@@ -763,6 +763,7 @@ class SwitcherManager:
             "stream1Key": "",
             "stream2Live": False,
             "splitviewOn": False,
+            "fullScreenSlideOn": False,
             "mp1StillIndex": None,
         }
         self._lock = threading.Lock()
@@ -866,6 +867,7 @@ class SwitcherManager:
                 "stream1Key": self._client.stream1_rtmp_key or self._config.get("stream1_key", ""),
                 "stream2Live": self._client.stream2_output_live,
                 "splitviewOn": self._client.pgm_src == SOURCE_MULTI,
+                "fullScreenSlideOn": self._god_bless_active,
                 "mp1StillIndex": self._client.mp1_still_index,
             })
 
@@ -2235,6 +2237,12 @@ class Api:
             return _get_switcher_manager().splitview_off()
         except Exception as e:
             return False, f"switcher_splitview_off error: {e}"
+
+    def switcher_full_screen_slide(self):
+        try:
+            return _get_switcher_manager().god_bless_screen()
+        except Exception as e:
+            return False, f"switcher_full_screen_slide error: {e}"
 
     def configure_multisource_layout(self):
         try:

@@ -396,15 +396,70 @@
     }
     .streamBar button.keyBtn.on,
     .streamBar button.stillBtn.on,
-    .streamBar button.splitviewBtn.on {
+    .streamBar button.splitviewBtn.on,
+    .streamBar button.fullScreenSlideBtn.on {
       background: #16a34a;
       border-color: #15803d;
       color: #fff;
     }
-    .streamBar button.keyBtn.offActive {
-      background: #1e40af;
-      border-color: #1e3a8a;
-      color: #fff;
+    .streamBarToggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px 4px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+      user-select: none;
+      transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+    }
+    .streamBarToggle:hover:not(.disabled) {
+      border-color: #94a3b8;
+      background: #f8fafc;
+    }
+    .streamBarToggle.active {
+      border-color: #16a34a;
+      background: #f0fdf4;
+      box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.2);
+    }
+    .streamBarToggle.disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .streamBarToggle .streamToggleLabel {
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+      letter-spacing: 0;
+      text-transform: none;
+      margin: 0;
+    }
+    .streamBarToggle.active .streamToggleLabel {
+      color: #15803d;
+    }
+    .streamBarToggle .streamToggleState {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #94a3b8;
+      min-width: 22px;
+    }
+    .streamBarToggle.active .streamToggleState {
+      color: #16a34a;
+    }
+    .streamBarToggle .streamToggleSwitch {
+      width: 40px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+    .streamBarToggle .streamToggleSwitch.on {
+      background: #16a34a;
+    }
+    .streamBarToggle.active .streamToggleSwitch.on::after {
+      transform: translateX(18px);
     }
     .streamBar button.goLive.on {
       background: #dc2626;
@@ -1414,18 +1469,26 @@
     <div class="mainStack">
     <div class="streamBarWrap">
     <div class="streamBar" id="streamBar">
-      <span class="streamLabel">Keys</span>
-      <button type="button" class="ghost keyBtn" id="usk1OnBtn" onclick="usk1On()">Lyrics On</button>
-      <button type="button" class="ghost keyBtn" id="usk1OffBtn" onclick="usk1Off()">Lyrics Off</button>
-      <button type="button" class="ghost keyBtn" id="dsk1OnBtn" onclick="dsk1On()">Title On</button>
-      <button type="button" class="ghost keyBtn" id="dsk1OffBtn" onclick="dsk1Off()">Title Off</button>
-      <span class="streamLabel" style="margin-left:8px;">Stills</span>
+      <div class="streamBarToggle" id="lyricsToggleWrap" role="button" tabindex="0" aria-pressed="false" title="Lyrics upstream key" onclick="toggleLyrics()" onkeydown="streamToggleKeydown(event, toggleLyrics)">
+        <span class="streamToggleLabel">Lyrics</span>
+        <span class="streamToggleState" id="lyricsToggleState">Off</span>
+        <div class="toggleSwitch streamToggleSwitch" id="lyricsToggle" aria-hidden="true"></div>
+      </div>
+      <div class="streamBarToggle" id="titleToggleWrap" role="button" tabindex="0" aria-pressed="false" title="Title downstream key" onclick="toggleTitle()" onkeydown="streamToggleKeydown(event, toggleTitle)">
+        <span class="streamToggleLabel">Title</span>
+        <span class="streamToggleState" id="titleToggleState">Off</span>
+        <div class="toggleSwitch streamToggleSwitch" id="titleToggle" aria-hidden="true"></div>
+      </div>
+      <span class="streamLabel" style="margin-left:4px;">Stills</span>
       <button type="button" class="ghost stillBtn" id="stillSidBtn" onclick="activateStill(1)">Sid</button>
       <button type="button" class="ghost stillBtn" id="stillNateBtn" onclick="activateStill(2)">Nate</button>
       <button type="button" class="ghost stillBtn" id="stillCecilBtn" onclick="activateStill(3)">Cecil</button>
-      <span class="streamLabel" style="margin-left:8px;">Splitview</span>
-      <button type="button" class="ghost splitviewBtn" id="splitviewOnBtn" onclick="splitviewOn()">Splitview On</button>
-      <button type="button" class="ghost keyBtn splitviewBtn" id="splitviewOffBtn" onclick="splitviewOff()">Splitview Off</button>
+      <div class="streamBarToggle" id="splitviewToggleWrap" role="button" tabindex="0" aria-pressed="false" title="Multisource splitview" onclick="toggleSplitview()" onkeydown="streamToggleKeydown(event, toggleSplitview)">
+        <span class="streamToggleLabel">Splitview</span>
+        <span class="streamToggleState" id="splitviewToggleState">Off</span>
+        <div class="toggleSwitch streamToggleSwitch" id="splitviewToggle" aria-hidden="true"></div>
+      </div>
+      <button type="button" class="ghost keyBtn fullScreenSlideBtn" id="fullScreenSlideBtn" onclick="fullScreenSlide()">Full Screen Slide</button>
       <span class="streamBarSectionGap" aria-hidden="true"></span>
       <span class="streamLabel">Stream</span>
       <button type="button" class="primary goLive" id="streamGoLiveBtn" onclick="streamGoLive()">Go Live</button>
@@ -1870,33 +1933,59 @@
     showStreamToast(msg, "error");
   }
 
-  function setLyricsUi(on) {
+  function setStreamBarToggle(wrap, stateEl, toggleEl, on) {
     const live = !!on;
-    if (dom.usk1OnBtn) dom.usk1OnBtn.classList.toggle("on", live);
-    if (dom.usk1OffBtn) {
-      dom.usk1OffBtn.classList.remove("on");
-      dom.usk1OffBtn.classList.toggle("offActive", !live);
+    if (wrap) {
+      wrap.classList.toggle("active", live);
+      wrap.setAttribute("aria-pressed", live ? "true" : "false");
     }
+    if (stateEl) stateEl.textContent = live ? "On" : "Off";
+    if (toggleEl) toggleEl.classList.toggle("on", live);
+  }
+
+  function streamToggleKeydown(event, fn) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      fn();
+    }
+  }
+
+  function isStreamBarToggleOn(wrap) {
+    return !!(wrap && wrap.classList.contains("active"));
+  }
+
+  function setLyricsUi(on) {
+    setStreamBarToggle(
+      dom.lyricsToggleWrap,
+      dom.lyricsToggleState,
+      dom.lyricsToggle,
+      on
+    );
   }
 
   function setTitleUi(on) {
-    const live = !!on;
-    if (dom.dsk1OnBtn) dom.dsk1OnBtn.classList.toggle("on", live);
-    if (dom.dsk1OffBtn) {
-      dom.dsk1OffBtn.classList.remove("on");
-      dom.dsk1OffBtn.classList.toggle("offActive", !live);
-    }
+    setStreamBarToggle(
+      dom.titleToggleWrap,
+      dom.titleToggleState,
+      dom.titleToggle,
+      on
+    );
   }
 
   function setSplitviewUi(on) {
-    const live = !!on;
-    if (dom.splitviewOnBtn) dom.splitviewOnBtn.classList.toggle("on", live);
-    if (dom.splitviewOffBtn) {
-      dom.splitviewOffBtn.classList.remove("on");
-      dom.splitviewOffBtn.classList.toggle("offActive", !live);
-    }
+    setStreamBarToggle(
+      dom.splitviewToggleWrap,
+      dom.splitviewToggleState,
+      dom.splitviewToggle,
+      on
+    );
     updateCameraCutUi("cam1");
     updateCameraCutUi("cam2");
+  }
+
+  function setFullScreenSlideUi(on) {
+    const live = !!on;
+    if (dom.fullScreenSlideBtn) dom.fullScreenSlideBtn.classList.toggle("on", live);
   }
 
   function setStreamLiveUi(live) {
@@ -2633,15 +2722,25 @@
   }
 
   const SWITCHER_BAR_BTN_IDS = [
-    "usk1OnBtn", "usk1OffBtn", "dsk1OnBtn", "dsk1OffBtn",
     "stillSidBtn", "stillNateBtn", "stillCecilBtn",
-    "splitviewOnBtn", "splitviewOffBtn", "streamGoLiveBtn", "streamStopBtn"
+    "fullScreenSlideBtn", "streamGoLiveBtn", "streamStopBtn"
+  ];
+  const SWITCHER_BAR_TOGGLE_WRAP_IDS = [
+    "lyricsToggleWrap", "titleToggleWrap", "splitviewToggleWrap"
   ];
 
   function setSwitcherBarConnected(connected) {
     const on = !!connected;
     const streamBar = document.querySelector(".streamBar");
     if (streamBar) streamBar.classList.toggle("disconnected", !on);
+    SWITCHER_BAR_TOGGLE_WRAP_IDS.forEach(function (id) {
+      const wrap = document.getElementById(id);
+      if (!wrap) return;
+      wrap.classList.toggle("disabled", !on);
+      wrap.setAttribute("aria-disabled", on ? "false" : "true");
+      if (!on) wrap.setAttribute("tabindex", "-1");
+      else wrap.setAttribute("tabindex", "0");
+    });
     SWITCHER_BAR_BTN_IDS.forEach(function (id) {
       const btn = document.getElementById(id);
       if (!btn) return;
@@ -2675,25 +2774,21 @@
       "splitviewOn",
       !!(obsStatus && obsStatus.splitviewOn)
     );
-    if (dom.usk1OnBtn) {
-      dom.usk1OnBtn.classList.toggle("on", uskOn);
-    }
-    if (dom.usk1OffBtn) {
-      dom.usk1OffBtn.classList.remove("on");
-      dom.usk1OffBtn.classList.toggle("offActive", !uskOn);
-    }
-    if (dom.dsk1OnBtn) {
-      dom.dsk1OnBtn.classList.toggle("on", dskOn);
-    }
-    if (dom.dsk1OffBtn) {
-      dom.dsk1OffBtn.classList.remove("on");
-      dom.dsk1OffBtn.classList.toggle("offActive", !dskOn);
-    }
+    setLyricsUi(uskOn);
+    setTitleUi(dskOn);
     switcherSplitviewOn = splitOn;
-    if (dom.splitviewOnBtn) dom.splitviewOnBtn.classList.toggle("on", splitOn);
-    if (dom.splitviewOffBtn) {
-      dom.splitviewOffBtn.classList.remove("on");
-      dom.splitviewOffBtn.classList.toggle("offActive", !splitOn);
+    setSplitviewUi(splitOn);
+    const slideOn = resolveStreamBarValue(
+      "fullScreenSlideOn",
+      !!(obsStatus && obsStatus.fullScreenSlideOn)
+    );
+    setFullScreenSlideUi(slideOn);
+    if (
+      slideOn !== undefined &&
+      obsStatus &&
+      obsStatus.fullScreenSlideOn === slideOn
+    ) {
+      clearStreamBarPending("fullScreenSlideOn");
     }
     const stillIdx = getStreamBarPending("mp1StillIndex");
     const effectiveStill =
@@ -2793,6 +2888,46 @@
       },
       "streamLive",
       false
+    );
+  }
+
+  async function toggleLyrics() {
+    if (isStreamBarToggleOn(dom.lyricsToggleWrap)) await usk1Off();
+    else await usk1On();
+  }
+
+  async function toggleTitle() {
+    if (isStreamBarToggleOn(dom.titleToggleWrap)) await dsk1Off();
+    else await dsk1On();
+  }
+
+  async function toggleSplitview() {
+    if (isStreamBarToggleOn(dom.splitviewToggleWrap)) await splitviewOff();
+    else await splitviewOn();
+  }
+
+  async function fullScreenSlide() {
+    const turningOn = !dom.fullScreenSlideBtn || !dom.fullScreenSlideBtn.classList.contains("on");
+    await runSwitcherBarAction(
+      function () { setFullScreenSlideUi(turningOn); },
+      async function () {
+        try {
+          const api = window.pywebview?.api;
+          if (!api?.switcher_full_screen_slide) return;
+          const [ok, resp] = await api.switcher_full_screen_slide();
+          if (!ok) {
+            clearStreamBarPending("fullScreenSlideOn");
+            showStreamError("Full Screen Slide: " + resp);
+            pollObsStatus();
+          }
+        } catch (e) {
+          clearStreamBarPending("fullScreenSlideOn");
+          showStreamError("Full Screen Slide: " + e);
+          pollObsStatus();
+        }
+      },
+      "fullScreenSlideOn",
+      turningOn
     );
   }
 
@@ -4312,8 +4447,11 @@
       "cam1CutBtn","cam2CutBtn","cam1AutoBtn","cam2AutoBtn","cam1ObsConnecting","cam2ObsConnecting","cam1ObsConnected","cam2ObsConnected","cam1Ip","cam2Ip","cam1Title","cam2Title",
       "obsSettings","switcherInfoDebug","obsHost","obsPort","settingsCam1Ip","settingsCam2Ip",
       "settingsPresetCount","settingsPresetCountValue","settingsVersion","obsHoldTime","obsHoldTimeValue","obsSimpleModeToggle",
-      "usk1OnBtn","usk1OffBtn","dsk1OnBtn","dsk1OffBtn","stillSidBtn","stillNateBtn","stillCecilBtn",
-      "splitviewOnBtn","splitviewOffBtn","streamGoLiveBtn","streamStopBtn","streamBarStatus","stream1KeyInput",
+      "lyricsToggleWrap","lyricsToggleState","lyricsToggle",
+      "titleToggleWrap","titleToggleState","titleToggle",
+      "splitviewToggleWrap","splitviewToggleState","splitviewToggle",
+      "fullScreenSlideBtn","stillSidBtn","stillNateBtn","stillCecilBtn",
+      "streamGoLiveBtn","streamStopBtn","streamBarStatus","stream1KeyInput",
       "cam1Preview","cam2Preview","cam1PreviewPlaceholder","cam2PreviewPlaceholder"];
     for (let i = 0; i < ids.length; i++) dom[ids[i]] = document.getElementById(ids[i]);
     dom.top = document.querySelector(".top");
