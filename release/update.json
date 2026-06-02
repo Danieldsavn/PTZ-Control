@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.0/PTZ-Control.exe",
-    "sha256":  "76c3b6ff50818b379c3e3b7fcc2f8d2100d8ae43c2da3bcd3d30af3ab2d76904",
-    "version":  "4.0",
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.1/PTZ-Control.exe",
+    "sha256":  "da92a15fa0af57bcf6e6862ef9f0c4a0536831f2e6b85574b40a37f69a90cb91",
+    "version":  "4.1",
     "release_notes":  "Per-cue ProPresenter MIDI; Full Screen Slide AUTO to Input 3; stream bar toggles; direct switcher path (v3.22 speed)."
 }

@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import subprocess
 import sys
 from typing import Any, Callable
@@ -128,6 +129,37 @@ def _exe_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _app_data_dir():
+    # Persistent writable folder that survives app updates/reinstalls.
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or _exe_dir()
+    else:
+        base = os.path.expanduser("~")
+    path = os.path.join(base, "PTZ-Control")
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception:
+        return _exe_dir()
+    return path
+
+
+def _persist_path(filename: str) -> str:
+    """
+    Return persistent path for runtime data and migrate legacy files written
+    next to the EXE on first launch after upgrade.
+    """
+    target = os.path.join(_app_data_dir(), filename)
+    if os.path.exists(target):
+        return target
+    legacy = os.path.join(_exe_dir(), filename)
+    if legacy != target and os.path.exists(legacy):
+        try:
+            shutil.copy2(legacy, target)
+        except Exception:
+            pass
+    return target
+
+
 def _ui_base_dir():
     # Where we want to READ bundled UI assets from
     if hasattr(sys, "_MEIPASS"):
@@ -135,10 +167,10 @@ def _ui_base_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
-PRESETS_FILE = os.path.join(_exe_dir(), "presets.json")
-SWITCHER_CONFIG_FILE = os.path.join(_exe_dir(), "switcher.json")
-OBS_CONFIG_FILE = os.path.join(_exe_dir(), "obs.json")  # legacy; migrated to switcher.json
-WINDOW_CONFIG_FILE = os.path.join(_exe_dir(), "window.json")
+PRESETS_FILE = _persist_path("presets.json")
+SWITCHER_CONFIG_FILE = _persist_path("switcher.json")
+OBS_CONFIG_FILE = _persist_path("obs.json")  # legacy; migrated to switcher.json
+WINDOW_CONFIG_FILE = _persist_path("window.json")
 VERSION_FILE = os.path.join(_exe_dir(), "version.json")
 DEFAULT_VERSION = "3.0"
 
