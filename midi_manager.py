@@ -65,6 +65,18 @@ SCENES: dict[str, dict[str, str]] = {
         "label": "Full Screen Slide (Auto)",
         "description": "AUTO to Input 3; splitview off; neither camera live",
     },
+    "worship_transition": {
+        "label": "Worship",
+        "description": "Other camera preset 11, tracking off, AUTO, then lyrics on",
+    },
+    "sermon_transition": {
+        "label": "Sermon",
+        "description": "Other camera preset 1, lyrics off, CUT, then tracking on (5s)",
+    },
+    "end_service_transition": {
+        "label": "End of Service",
+        "description": "Other camera preset 12, lyrics off, tracking off, then AUTO",
+    },
 }
 
 # v3.29 and earlier composite scenes → best-effort note migration
@@ -73,6 +85,9 @@ _LEGACY_SCENE_NOTE_MAP: dict[str, str] = {
     "god_bless_screen": "full_screen_slide_auto",
     "camera_plus_lyrics": "lyrics_on",
     "full_screen_camera": "splitview_off",
+    "worship": "worship_transition",
+    "sermon": "sermon_transition",
+    "end_of_service": "end_service_transition",
 }
 
 NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
@@ -120,6 +135,7 @@ def note_label(note: Optional[int]) -> str:
 def _default_midi_config() -> dict[str, Any]:
     return {
         "device": "",
+        "enabled": True,
         "notes": {scene_id: None for scene_id in SCENES},
     }
 
@@ -129,6 +145,7 @@ def normalize_midi_config(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return base
     device = str(raw.get("device") or "").strip()
+    enabled = bool(raw.get("enabled", base.get("enabled", True)))
     notes_in = raw.get("notes")
     notes: dict[str, Optional[int]] = dict(base["notes"])
     if isinstance(notes_in, dict):
@@ -153,7 +170,7 @@ def normalize_midi_config(raw: Any) -> dict[str, Any]:
                 notes[new_id] = n if 0 <= n <= 127 else None
             except (TypeError, ValueError):
                 pass
-    return {"device": device, "notes": notes}
+    return {"device": device, "enabled": enabled, "notes": notes}
 
 
 def _note_press(msg: Any, active_notes: set[int]) -> Optional[int]:
@@ -251,6 +268,7 @@ class MidiManager:
             self._sync_learn_timeout_locked()
             notes = dict(self._midi_cfg["notes"])
             device = (self._midi_cfg.get("device") or "").strip()
+            enabled = bool(self._midi_cfg.get("enabled", True))
             learn = self._learn_scene
             learn_message = self._learn_message
             last = dict(self._last_learned) if self._last_learned else None
@@ -260,6 +278,7 @@ class MidiManager:
         return {
             "available": midi_available(),
             "device": device,
+            "enabled": enabled,
             "notes": notes,
             "note_labels": {sid: note_label(n) for sid, n in notes.items()},
             "scenes": [
@@ -280,6 +299,13 @@ class MidiManager:
             "listening": self._listener_alive() and self._port is not None,
             "listener_error": self._last_open_error,
         }
+
+    def set_enabled(self, enabled: bool) -> tuple[bool, str]:
+        with self._lock:
+            self._midi_cfg["enabled"] = bool(enabled)
+            self._persist_locked()
+        app_log.midi("MIDI enabled changed", {"enabled": bool(enabled)})
+        return True, "MIDI triggers " + ("enabled" if enabled else "disabled")
 
     def set_device(self, device_name: str) -> tuple[bool, str]:
         name = (device_name or "").strip()
@@ -370,6 +396,7 @@ class MidiManager:
         self._save_midi_config(
             {
                 "device": self._midi_cfg["device"],
+                "enabled": bool(self._midi_cfg.get("enabled", True)),
                 "notes": dict(self._midi_cfg["notes"]),
             }
         )
@@ -489,9 +516,14 @@ class MidiManager:
             self._disarm_learn_timer()
             return
 
+        # Global MIDI enable/disable; still allow learn when disabled.
+        with self._lock:
+            if not bool(self._midi_cfg.get("enabled", True)):
+                return
+
         now = time.monotonic()
         last = self._last_trigger_at.get(note, 0.0)
-        if now - last < 0.12:
+        if now - last < 0.10:
             return
         self._last_trigger_at[note] = now
 

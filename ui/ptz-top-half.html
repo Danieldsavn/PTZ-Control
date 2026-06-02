@@ -1336,6 +1336,14 @@
       margin: 12px 0 16px;
       font-size: 13px;
     }
+    .midiMapScroller {
+      max-height: 320px;
+      overflow-y: auto;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #fff;
+      margin-bottom: 12px;
+    }
     .midiMapTable th,
     .midiMapTable td {
       padding: 10px 8px;
@@ -1492,8 +1500,8 @@
     <div class="mainStack">
     <div class="streamBarWrap">
     <div class="streamBar" id="streamBar">
-      <div class="streamBarToggle" id="lyricsToggleWrap" role="button" tabindex="0" aria-pressed="false" title="Lyrics upstream key" onclick="toggleLyrics()" onkeydown="streamToggleKeydown(event, toggleLyrics)">
-        <span class="streamToggleLabel">Lyrics</span>
+      <div class="streamBarToggle" id="lyricsToggleWrap" role="button" tabindex="0" aria-pressed="false" title="ProPresenter Layer upstream key" onclick="toggleLyrics()" onkeydown="streamToggleKeydown(event, toggleLyrics)">
+        <span class="streamToggleLabel">ProPresenter Layer</span>
         <span class="streamToggleState" id="lyricsToggleState">Off</span>
         <div class="toggleSwitch streamToggleSwitch" id="lyricsToggle" aria-hidden="true"></div>
       </div>
@@ -1511,7 +1519,7 @@
         <span class="streamToggleState" id="splitviewToggleState">Off</span>
         <div class="toggleSwitch streamToggleSwitch" id="splitviewToggle" aria-hidden="true"></div>
       </div>
-      <button type="button" class="ghost keyBtn fullScreenSlideBtn" id="fullScreenSlideBtn" onclick="fullScreenSlide()" title="Program Input 3 (slide). Turns off splitview; neither camera is live. Press again to return to the last camera.">Full Screen Slide</button>
+      <button type="button" class="ghost keyBtn fullScreenSlideBtn" id="fullScreenSlideBtn" onclick="fullScreenSlide()" title="Program Input 3 (slide). Turns off splitview; neither camera is live. Re-press does nothing when already active.">Full Screen Slide</button>
       <span class="streamBarSectionGap" aria-hidden="true"></span>
       <span class="streamLabel">Stream</span>
       <button type="button" class="primary goLive" id="streamGoLiveBtn" onclick="streamGoLive()">Go Live</button>
@@ -1755,23 +1763,31 @@
       </div>
 
       <div id="settingsTabPanelMidi" class="settingsTabPanel">
-        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Receive-only MIDI from ProPresenter — assign one note per cue (Lyrics/Title/Splitview on &amp; off, Camera cuts, Stills, Full Screen Slide AUTO). Press <b>Learn</b>, then play a note within <b>15 seconds</b>.</p>
+        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Receive-only MIDI from ProPresenter — assign one note per cue (Lyrics/Title/Splitview on &amp; off, Camera cuts, Stills, Full Screen Slide AUTO, Worship, Sermon, End of Service). Press <b>Learn</b>, then play a note within <b>15 seconds</b>.</p>
         <p id="midiStatusLine" class="small">Loading MIDI…</p>
         <button type="button" class="ghost" id="midiCancelLearnBtn" style="display:none; margin:0 0 12px 0;" onclick="midiCancelLearn()">Cancel learning</button>
+        <div class="obsSettingsRow" style="align-items: center;">
+          <label>MIDI triggers</label>
+          <div class="toggleWrap">
+            <div class="toggleSwitch on" id="midiEnabledToggle" role="button" tabindex="0" aria-pressed="true" title="Enable or disable all MIDI-triggered actions" onclick="onMidiEnabledToggleClick()" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); onMidiEnabledToggleClick(); }"></div>
+          </div>
+        </div>
         <div class="obsSettingsRow">
           <label>MIDI input device</label>
           <select id="midiDeviceSelect" style="flex:1; max-width:420px; padding:8px; border-radius:6px; border:1px solid #cbd5e1;"></select>
         </div>
-        <table class="midiMapTable" aria-label="MIDI cue mappings">
-          <thead>
-            <tr>
-              <th>Scene</th>
-              <th>MIDI note</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="midiMapBody"></tbody>
-        </table>
+        <div class="midiMapScroller">
+          <table class="midiMapTable" aria-label="MIDI cue mappings">
+            <thead>
+              <tr>
+                <th>Scene</th>
+                <th>MIDI note</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="midiMapBody"></tbody>
+          </table>
+        </div>
         <div class="obsSettingsActions">
           <button class="primary" onclick="saveMidiDevice()">Save device</button>
           <button class="ghost" onclick="loadMidiSettings()">Refresh</button>
@@ -2021,11 +2037,33 @@
         setFullScreenSlideUi(true);
         setSplitviewUi(false);
         break;
+      case "worship_transition":
+        setStreamBarPending("usk1On", true);
+        setLyricsUi(true);
+        break;
+      case "sermon_transition":
+        setStreamBarPending("usk1On", false);
+        setLyricsUi(false);
+        break;
+      case "end_service_transition":
+        setStreamBarPending("usk1On", false);
+        setLyricsUi(false);
+        break;
       default:
         break;
     }
     pollObsStatus();
   };
+
+  async function pollMidiUiEvent(api) {
+    try {
+      if (!api?.midi_pop_ui_event) return;
+      const [ok, evt] = await api.midi_pop_ui_event();
+      if (ok && evt && evt.cue) {
+        window.handleMidiProPresenterCue(evt.cue);
+      }
+    } catch (e) {}
+  }
 
   function setStreamBarToggle(wrap, stateEl, toggleEl, on) {
     const live = !!on;
@@ -2639,6 +2677,7 @@
       updateLockState();
       const api = window.pywebview?.api;
       if (!api?.obs_get_status) return;
+      pollMidiUiEvent(api);
       const [ok, obsStatus] = await api.obs_get_status();
       if (ok && obsStatus) {
         const connected = !!obsStatus.connected;
@@ -3001,7 +3040,7 @@
   }
 
   async function fullScreenSlide() {
-    const turningOn = !dom.fullScreenSlideBtn || !dom.fullScreenSlideBtn.classList.contains("on");
+    const turningOn = true;
     await runSwitcherBarAction(
       function () { setFullScreenSlideUi(turningOn); },
       async function () {
@@ -4023,6 +4062,7 @@
   async function loadMidiSettings() {
     const statusEl = document.getElementById("midiStatusLine");
     const select = document.getElementById("midiDeviceSelect");
+    const enabledToggle = document.getElementById("midiEnabledToggle");
     const tbody = document.getElementById("midiMapBody");
     if (!select || !tbody) return;
     try {
@@ -4053,6 +4093,11 @@
         select.appendChild(o);
       });
       select.value = cfg.device || "";
+      if (enabledToggle) {
+        const on = cfg.enabled !== false;
+        enabledToggle.classList.toggle("on", on);
+        enabledToggle.setAttribute("aria-pressed", on ? "true" : "false");
+      }
       if (statusEl) {
         if (!cfg.available) {
           statusEl.textContent = "MIDI libraries not installed on this PC.";
@@ -4122,6 +4167,32 @@
     if (!cancelBtn) return;
     const show = !!(cfg && cfg.learning);
     cancelBtn.style.display = show ? "inline-block" : "none";
+  }
+
+  async function onMidiEnabledToggleClick() {
+    const toggle = document.getElementById("midiEnabledToggle");
+    const api = window.pywebview?.api;
+    if (!toggle || !api?.midi_set_enabled) return;
+    const nowOn = !toggle.classList.contains("on");
+    try {
+      const [ok, resp] = await api.midi_set_enabled(nowOn);
+      if (!ok) {
+        showStreamToast(resp || "Failed to update MIDI triggers", "error");
+        return;
+      }
+      toggle.classList.toggle("on", nowOn);
+      toggle.setAttribute("aria-pressed", nowOn ? "true" : "false");
+      const statusEl = document.getElementById("midiStatusLine");
+      if (statusEl) {
+        if (nowOn) {
+          statusEl.classList.remove("warn");
+        } else {
+          statusEl.classList.add("warn");
+        }
+      }
+    } catch (e) {
+      showStreamToast("MIDI toggle error: " + e, "error");
+    }
   }
 
   async function midiCancelLearn() {

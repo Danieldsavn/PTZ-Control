@@ -1591,13 +1591,7 @@ class SwitcherManager:
             return False, f"Full Screen Slide error: {e}"
 
     def full_screen_slide(self) -> tuple[bool, str]:
-        """Toggle Full Screen Slide (UI button)."""
-        if not self._ensure_connected():
-            return False, "Switcher not connected (reconnecting…)"
-        slide_src = self._full_screen_slide_source()
-        pgm = self._client.pgm_src
-        if pgm == slide_src and pgm != SOURCE_MULTI:
-            return self.full_screen_slide_off()
+        """UI button behavior: only go to slide (no toggle-off on repeat press)."""
         return self.full_screen_slide_on()
 
     def cut_camera(self, cam_key):
@@ -1679,6 +1673,8 @@ def _get_switcher_manager():
 
 
 _midi_manager = None
+_midi_ui_event_lock = threading.Lock()
+_midi_ui_event: dict[str, Any] | None = None
 
 
 def _save_midi_config_section(midi_cfg: dict) -> None:
@@ -1689,19 +1685,53 @@ def _save_midi_config_section(midi_cfg: dict) -> None:
 
 
 def _notify_midi_propresenter_ui(cue_id: str) -> None:
-    """Sync stream bar / camera UI and show ProPresenter indicator."""
-    global _app_window
-    win = _app_window
-    if not win:
-        return
+    """Queue cue for UI thread to consume on next poll."""
+    global _midi_ui_event
+    with _midi_ui_event_lock:
+        _midi_ui_event = {
+            "cue": str(cue_id),
+            "at": time.time(),
+        }
+
+
+def _pop_midi_ui_event() -> dict[str, Any] | None:
+    global _midi_ui_event
+    with _midi_ui_event_lock:
+        evt = _midi_ui_event
+        _midi_ui_event = None
+        return evt
+
+
+def _midi_non_live_cam(sm: "SwitcherManager") -> str:
+    """Pick the camera that is currently not on Program."""
     try:
-        payload = json.dumps(str(cue_id))
-        win.evaluate_js(
-            "window.handleMidiProPresenterCue && "
-            f"window.handleMidiProPresenterCue({payload});"
-        )
-    except Exception as e:
-        app_log.midi("UI notify failed", {"cue": cue_id, "error": str(e)})
+        st = sm.get_status()
+        cams = st.get("cams", {}) if isinstance(st, dict) else {}
+        cam1_live = bool(cams.get("cam1", {}).get("program"))
+        cam2_live = bool(cams.get("cam2", {}).get("program"))
+        if cam1_live and not cam2_live:
+            return "cam2"
+        if cam2_live and not cam1_live:
+            return "cam1"
+        # Fallback: opposite of the last known live camera.
+        return "cam2" if (sm._last_live_cam or "cam1") == "cam1" else "cam1"
+    except Exception:
+        return "cam2" if (sm._last_live_cam or "cam1") == "cam1" else "cam1"
+
+
+def _midi_tracking_set(cam: str, on: bool) -> tuple[bool, str]:
+    return _post(
+        cam,
+        "/cgi-bin/param.cgi?postfulltrack",
+        {
+            "path": "%2Fdata%2Ftrack.conf",
+            "common.track": "1" if on else "0",
+        },
+    )
+
+
+def _midi_recall_preset(cam: str, preset: int) -> tuple[bool, str]:
+    return _visca_send_udp(cam, _visca_preset_recall(int(preset)))
 
 
 def _midi_trigger_scene(scene_id: str) -> None:
@@ -1709,19 +1739,57 @@ def _midi_trigger_scene(scene_id: str) -> None:
     label = meta.get("label", scene_id)
     app_log.midi("Trigger cue", {"cue": scene_id, "label": label})
     sm = _get_switcher_manager()
+    st = sm.get_status() if hasattr(sm, "get_status") else {}
+    usk_on = bool(st.get("usk1On")) if isinstance(st, dict) else False
+    dsk_on = bool(st.get("dsk1On")) if isinstance(st, dict) else False
+    split_on = bool(st.get("splitviewOn")) if isinstance(st, dict) else False
+    slide_on = bool(st.get("fullScreenSlideOn")) if isinstance(st, dict) else False
+
+    def worship_transition() -> tuple[bool, str]:
+        cam = _midi_non_live_cam(sm)
+        _midi_tracking_set(cam, False)
+        _midi_recall_preset(cam, 11)
+        ok, msg = sm.fade_camera(cam)
+        if not ok:
+            return ok, msg
+        time.sleep(1.0)
+        return sm.usk1_set(True)
+
+    def sermon_transition() -> tuple[bool, str]:
+        cam = _midi_non_live_cam(sm)
+        sm.usk1_set(False)
+        _midi_tracking_set(cam, False)
+        _midi_recall_preset(cam, 1)
+        ok, msg = sm.cut_camera(cam)
+        if not ok:
+            return ok, msg
+        time.sleep(5.0)
+        _midi_tracking_set(cam, True)
+        return True, "Sermon transition"
+
+    def end_service_transition() -> tuple[bool, str]:
+        cam = _midi_non_live_cam(sm)
+        sm.usk1_set(False)
+        _midi_tracking_set(cam, False)
+        _midi_recall_preset(cam, 12)
+        return sm.fade_camera(cam)
+
     handlers: dict[str, Callable[[], Any]] = {
-        "lyrics_on": lambda: sm.usk1_set(True),
-        "lyrics_off": lambda: sm.usk1_set(False),
-        "title_on": lambda: sm.dsk1_set(True),
-        "title_off": lambda: sm.dsk1_set(False),
-        "splitview_on": lambda: sm.splitview_on(),
-        "splitview_off": lambda: sm.splitview_off(),
+        "lyrics_on": (lambda: (True, "Lyrics already On") if usk_on else sm.usk1_set(True)),
+        "lyrics_off": (lambda: (True, "Lyrics already Off") if not usk_on else sm.usk1_set(False)),
+        "title_on": (lambda: (True, "Title already On") if dsk_on else sm.dsk1_set(True)),
+        "title_off": (lambda: (True, "Title already Off") if not dsk_on else sm.dsk1_set(False)),
+        "splitview_on": (lambda: (True, "Splitview already On") if split_on else sm.splitview_on()),
+        "splitview_off": (lambda: (True, "Splitview already Off") if not split_on else sm.splitview_off()),
         "cam1_cut": lambda: sm.cut_camera("cam1"),
         "cam2_cut": lambda: sm.cut_camera("cam2"),
         "still_sid": lambda: sm.activate_still(1),
         "still_nate": lambda: sm.activate_still(2),
         "still_cecil": lambda: sm.activate_still(3),
-        "full_screen_slide_auto": lambda: sm.full_screen_slide_on(),
+        "full_screen_slide_auto": (lambda: (True, "Full Screen Slide already On") if slide_on else sm.full_screen_slide_on()),
+        "worship_transition": worship_transition,
+        "sermon_transition": sermon_transition,
+        "end_service_transition": end_service_transition,
     }
     handler = handlers.get(scene_id)
     if not handler:
@@ -2495,6 +2563,12 @@ class Api:
         except Exception as e:
             return False, f"midi_set_device error: {e}"
 
+    def midi_set_enabled(self, enabled: bool):
+        try:
+            return _get_midi_manager().set_enabled(bool(enabled))
+        except Exception as e:
+            return False, f"midi_set_enabled error: {e}"
+
     def midi_start_learn(self, scene_id: str):
         try:
             return _get_midi_manager().start_learn(str(scene_id))
@@ -2512,6 +2586,12 @@ class Api:
             return _get_midi_manager().clear_note(str(scene_id))
         except Exception as e:
             return False, f"midi_clear_note error: {e}"
+
+    def midi_pop_ui_event(self):
+        try:
+            return True, _pop_midi_ui_event()
+        except Exception as e:
+            return False, f"midi_pop_ui_event error: {e}"
 
   # --------- App update ---------
     def check_for_update(self, force=False):
