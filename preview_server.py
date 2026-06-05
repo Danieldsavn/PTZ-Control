@@ -7,13 +7,23 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PREVIEW_PORT = 8765
+PREVIEW_STALE_S = 4.0
+PREVIEW_MAX_AGE_S = 480.0
+WATCHDOG_INTERVAL_S = 15.0
+STREAM_MAX_AGE_S = 600.0
+
 _ffmpeg_path: str | None = None
 _procs: dict[str, subprocess.Popen] = {}
 _proc_lock = threading.Lock()
 _stream_locks: dict[str, threading.Lock] = {}
+_last_frame_at: dict[str, float] = {}
+_proc_started_at: dict[str, float] = {}
+_watchdog_stop = threading.Event()
+_watchdog_thread: threading.Thread | None = None
 
 
 def _stream_lock(cam_key: str) -> threading.Lock:
@@ -36,6 +46,49 @@ def _terminate_proc(proc: subprocess.Popen | None) -> None:
         proc.wait(timeout=1.0)
     except Exception:
         pass
+
+
+def _note_frame(cam_key: str) -> None:
+    _last_frame_at[cam_key] = time.monotonic()
+
+
+def _proc_is_stale(cam_key: str, proc: subprocess.Popen) -> bool:
+    if proc.poll() is not None:
+        return True
+    started = _proc_started_at.get(cam_key, 0.0)
+    if started and time.monotonic() - started > PREVIEW_MAX_AGE_S:
+        return True
+    last = _last_frame_at.get(cam_key, 0.0)
+    if last and time.monotonic() - last > PREVIEW_STALE_S:
+        return True
+    return False
+
+
+def _drop_proc_locked(cam_key: str) -> None:
+    proc = _procs.pop(cam_key, None)
+    if proc:
+        _terminate_proc(proc)
+    _last_frame_at.pop(cam_key, None)
+    _proc_started_at.pop(cam_key, None)
+
+
+def _watchdog_loop() -> None:
+    while not _watchdog_stop.wait(WATCHDOG_INTERVAL_S):
+        with _proc_lock:
+            for cam_key, proc in list(_procs.items()):
+                if _proc_is_stale(cam_key, proc):
+                    _drop_proc_locked(cam_key)
+
+
+def _ensure_watchdog() -> None:
+    global _watchdog_thread
+    if _watchdog_thread and _watchdog_thread.is_alive():
+        return
+    _watchdog_stop.clear()
+    _watchdog_thread = threading.Thread(
+        target=_watchdog_loop, name="PreviewWatchdog", daemon=True
+    )
+    _watchdog_thread.start()
 
 
 def _app_install_dir() -> str:
@@ -65,7 +118,7 @@ def _start_ffmpeg(cam_key: str, source_url: str) -> subprocess.Popen | None:
         "-loglevel",
         "error",
         "-fflags",
-        "nobuffer",
+        "nobuffer+flush_packets",
         "-flags",
         "low_delay",
         "-probesize",
@@ -75,7 +128,22 @@ def _start_ffmpeg(cam_key: str, source_url: str) -> subprocess.Popen | None:
     ]
     url = source_url.lower()
     if url.startswith("rtsp://"):
-        cmd.extend(["-rtsp_transport", "tcp"])
+        cmd.extend(
+            [
+                "-rtsp_transport",
+                "tcp",
+                "-max_delay",
+                "500000",
+                "-reorder_queue_size",
+                "0",
+                "-reconnect",
+                "1",
+                "-reconnect_streamed",
+                "1",
+                "-reconnect_delay_max",
+                "2",
+            ]
+        )
     cmd.extend(
         [
             "-i",
@@ -100,7 +168,11 @@ def _start_ffmpeg(cam_key: str, source_url: str) -> subprocess.Popen | None:
         }
         if sys.platform == "win32":
             popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
-        return subprocess.Popen(cmd, **popen_kw)
+        proc = subprocess.Popen(cmd, **popen_kw)
+        now = time.monotonic()
+        _proc_started_at[cam_key] = now
+        _last_frame_at[cam_key] = now
+        return proc
     except Exception:
         return None
 
@@ -108,10 +180,10 @@ def _start_ffmpeg(cam_key: str, source_url: str) -> subprocess.Popen | None:
 def _get_proc(cam_key: str, source_url: str) -> subprocess.Popen | None:
     with _proc_lock:
         proc = _procs.get(cam_key)
-        if proc and proc.poll() is None:
+        if proc and proc.poll() is None and not _proc_is_stale(cam_key, proc):
             return proc
         if proc:
-            _terminate_proc(proc)
+            _drop_proc_locked(cam_key)
         proc = _start_ffmpeg(cam_key, source_url)
         if proc:
             _procs[cam_key] = proc
@@ -120,16 +192,19 @@ def _get_proc(cam_key: str, source_url: str) -> subprocess.Popen | None:
 
 def stop_all_previews():
     with _proc_lock:
-        for proc in list(_procs.values()):
-            _terminate_proc(proc)
-        _procs.clear()
+        for cam_key in list(_procs.keys()):
+            _drop_proc_locked(cam_key)
 
 
 def invalidate_preview(cam_key: str):
     with _proc_lock:
-        proc = _procs.pop(cam_key, None)
-        if proc:
-            _terminate_proc(proc)
+        _drop_proc_locked(cam_key)
+
+
+def refresh_all_previews() -> None:
+    with _proc_lock:
+        for cam_key in list(_procs.keys()):
+            _drop_proc_locked(cam_key)
 
 
 class _PreviewHandler(BaseHTTPRequestHandler):
@@ -162,8 +237,13 @@ class _PreviewHandler(BaseHTTPRequestHandler):
             self.end_headers()
             with _stream_lock(cam):
                 buf = b""
+                stream_start = time.monotonic()
                 try:
                     while True:
+                        if time.monotonic() - stream_start > STREAM_MAX_AGE_S:
+                            break
+                        if _proc_is_stale(cam, proc):
+                            break
                         chunk = proc.stdout.read(4096)
                         if not chunk:
                             break
@@ -188,6 +268,7 @@ class _PreviewHandler(BaseHTTPRequestHandler):
                                 self.wfile.write(frame)
                                 self.wfile.write(b"\r\n")
                                 self.wfile.flush()
+                                _note_frame(cam)
                             except Exception:
                                 return
                 except Exception:
@@ -207,6 +288,7 @@ _server_thread: threading.Thread | None = None
 
 def start_preview_server(source_urls: dict[str, str], port: int = PREVIEW_PORT) -> int | None:
     global _server, _server_thread
+    _ensure_watchdog()
     if _server:
         _PreviewHandler.source_urls = dict(source_urls)
         return port
@@ -225,6 +307,7 @@ def start_preview_server(source_urls: dict[str, str], port: int = PREVIEW_PORT) 
 def shutdown_preview_server() -> None:
     """Stop FFmpeg children and the preview HTTP server."""
     global _server, _server_thread
+    _watchdog_stop.set()
     stop_all_previews()
     srv = _server
     if srv:

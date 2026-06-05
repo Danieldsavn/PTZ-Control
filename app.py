@@ -79,6 +79,7 @@ from preview_server import (
     ffmpeg_available,
     invalidate_preview,
     preview_url,
+    refresh_all_previews,
     shutdown_preview_server,
     start_preview_server,
     stop_all_previews,
@@ -2518,6 +2519,24 @@ class Api:
             }
         except Exception as e:
             return False, f"get_camera_preview_urls error: {e}"
+
+    def refresh_camera_preview(self, cam=""):
+        """Restart FFmpeg preview for one camera (or both) and return fresh URLs."""
+        try:
+            key = str(cam or "").strip()
+            if key in CAMERAS:
+                invalidate_preview(key)
+            else:
+                refresh_all_previews()
+            streams = {
+                c: _discover_stream_urls_from_ip(_get_camera_ip(c)) for c in CAMERAS
+            }
+            sources = {c: (streams[c].get("source") or "") for c in CAMERAS}
+            start_preview_server(sources, PREVIEW_PORT)
+            urls = {c: preview_url(c, PREVIEW_PORT) for c in CAMERAS}
+            return True, {"urls": urls, "ffmpeg": ffmpeg_available()}
+        except Exception as e:
+            return False, f"refresh_camera_preview error: {e}"
 
     def window_minimize(self):
         try:

@@ -708,8 +708,8 @@
     }
     .presetRow {
       display: grid;
-      grid-template-columns: 1fr auto auto;
-      gap: 8px;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 4px;
       align-items: center;
     }
     .presetBtn {
@@ -726,16 +726,23 @@
       border-color: #cbd5e1;
     }
     .miniBtn {
-      padding: 8px 12px;
-      border-radius: 8px;
+      padding: 4px 8px;
+      border-radius: 6px;
       font-weight: 500;
-      min-width: 70px;
-      font-size: 12px;
-      height: 32px;
+      min-width: 32px;
+      font-size: 11px;
+      height: 28px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       box-sizing: border-box;
+    }
+    .miniBtn.iconBtn {
+      min-width: 28px;
+      width: 28px;
+      padding: 0;
+      font-size: 14px;
+      line-height: 1;
     }
     /* Online dot */
     .dot {
@@ -1912,6 +1919,8 @@
   let streamBarPending = {};
   let streamBarPollDebounceTimer = null;
   let midiProPresenterIndicatorTimer = null;
+  let previewRefreshIntervalId = null;
+  let previewRetryTimer = null;
 
   function setStreamBarPending(key, value) {
     streamBarPending[key] = { value: value, until: Date.now() + STREAM_BAR_PENDING_MS };
@@ -2316,12 +2325,18 @@
       recallBtn.innerHTML = escHtml(label);
       recallBtn.onclick = () => presetRecall(cam, presetNum, label);
       const saveBtn = document.createElement("button");
-      saveBtn.className = "miniBtn primary editOnly";
-      saveBtn.textContent = "Save";
+      saveBtn.type = "button";
+      saveBtn.className = "miniBtn primary editOnly iconBtn";
+      saveBtn.textContent = "\uD83D\uDCBE";
+      saveBtn.title = "Save preset " + presetNum;
+      saveBtn.setAttribute("aria-label", "Save preset " + presetNum);
       saveBtn.onclick = () => presetSave(cam, presetNum);
       const renameBtn = document.createElement("button");
-      renameBtn.className = "miniBtn editOnly";
-      renameBtn.textContent = "Rename";
+      renameBtn.type = "button";
+      renameBtn.className = "miniBtn editOnly iconBtn";
+      renameBtn.textContent = "\u270E";
+      renameBtn.title = "Rename preset " + presetNum;
+      renameBtn.setAttribute("aria-label", "Rename preset " + presetNum);
       renameBtn.onclick = () => renamePreset(cam, presetNum, label);
       row.appendChild(recallBtn);
       row.appendChild(saveBtn);
@@ -4331,6 +4346,44 @@
 
 
 
+  async function refreshCameraPreview(cam) {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.refresh_camera_preview) return loadCameraPreviews();
+      const [ok, data] = await api.refresh_camera_preview(cam || "");
+      if (!ok || !data || !data.urls) return loadCameraPreviews();
+      function applyOne(key) {
+        const img = dom[key + "Preview"];
+        const ph = dom[key + "PreviewPlaceholder"];
+        const url = data.urls[key];
+        if (!img || !url) return;
+        img.onload = function () { if (ph) ph.style.display = "none"; };
+        img.onerror = function () { schedulePreviewRetry(); };
+        img.src = url + "?t=" + Date.now();
+        if (ph) {
+          ph.style.display = "flex";
+          ph.textContent = "Reconnecting preview…";
+        }
+      }
+      if (cam) {
+        applyOne(cam);
+      } else {
+        applyOne("cam1");
+        applyOne("cam2");
+      }
+    } catch (e) {
+      loadCameraPreviews();
+    }
+  }
+
+  function schedulePreviewRetry(delayMs) {
+    if (previewRetryTimer) return;
+    previewRetryTimer = setTimeout(function () {
+      previewRetryTimer = null;
+      if (!document.hidden) refreshCameraPreview("");
+    }, delayMs != null ? delayMs : 2000);
+  }
+
   async function loadCameraPreviews() {
     try {
       const api = window.pywebview?.api;
@@ -4359,6 +4412,7 @@
             ph.style.display = "flex";
             ph.textContent = "Preview unavailable. Source: " + (info.rtmp || info.source || url);
           }
+          schedulePreviewRetry();
         };
         img.src = url + "?t=" + Date.now();
         if (ph) {
@@ -4594,8 +4648,14 @@
       cameraWasOnline[cam] = !!ok;
       setDot(cam, ok);
       updateCameraCutUi(cam);
+      if (!ok && wasOnline) {
+        if (window.pywebview?.api?.refresh_camera_preview) {
+          window.pywebview.api.refresh_camera_preview(cam).catch(function () {});
+        }
+      }
       if (ok && !wasOnline) {
         await ensureTrackingOff(cam);
+        refreshCameraPreview(cam);
       }
     } catch (e) {
       cameraWasOnline[cam] = false;
@@ -4676,6 +4736,13 @@
     pollObsStatus();
     pollObsIntervalId = setInterval(pollObsStatus, POLL_OBS_INTERVAL_MS);
     loadCameraPreviews();
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) refreshCameraPreview("");
+    });
+    if (previewRefreshIntervalId) clearInterval(previewRefreshIntervalId);
+    previewRefreshIntervalId = setInterval(function () {
+      if (!document.hidden) refreshCameraPreview("");
+    }, 5 * 60 * 1000);
     wireSettingsDirtyListeners();
     } catch (e) {
       console.error("init error:", e);
