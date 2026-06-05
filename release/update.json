@@ -1,6 +1,6 @@
 ﻿{
     "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.2.1/PTZ-Control.exe",
-    "sha256":  "a946619673b6f7e1f96d5e677eafbeaa1e9ef4da71ec69545221bcdd7af73072",
+    "sha256":  "f5d2ec32ddab856aaceb247a64d759babab7552d5f82bda3e9b01238963e8d74",
     "version":  "4.2.1",
-    "release_notes":  "Hotfix: restore camera preview connect (fix aggressive FFmpeg stale watchdog from v4.2)."
+    "release_notes":  "Hotfix: restore camera preview connect (fix v4.2 FFmpeg stale watchdog). PTZ speed always starts at slowest (no saved speed). Removed focus controls (Auto/Manual/In/Out)."
 }
