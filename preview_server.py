@@ -11,7 +11,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PREVIEW_PORT = 8765
-PREVIEW_STALE_S = 4.0
+PREVIEW_WARMUP_S = 30.0
+PREVIEW_STALE_S = 20.0
 PREVIEW_MAX_AGE_S = 480.0
 WATCHDOG_INTERVAL_S = 15.0
 STREAM_MAX_AGE_S = 600.0
@@ -20,7 +21,7 @@ _ffmpeg_path: str | None = None
 _procs: dict[str, subprocess.Popen] = {}
 _proc_lock = threading.Lock()
 _stream_locks: dict[str, threading.Lock] = {}
-_last_frame_at: dict[str, float] = {}
+_last_frame_at: dict[str, float | None] = {}
 _proc_started_at: dict[str, float] = {}
 _watchdog_stop = threading.Event()
 _watchdog_thread: threading.Thread | None = None
@@ -55,13 +56,15 @@ def _note_frame(cam_key: str) -> None:
 def _proc_is_stale(cam_key: str, proc: subprocess.Popen) -> bool:
     if proc.poll() is not None:
         return True
+    now = time.monotonic()
     started = _proc_started_at.get(cam_key, 0.0)
-    if started and time.monotonic() - started > PREVIEW_MAX_AGE_S:
+    if started and now - started > PREVIEW_MAX_AGE_S:
         return True
-    last = _last_frame_at.get(cam_key, 0.0)
-    if last and time.monotonic() - last > PREVIEW_STALE_S:
-        return True
-    return False
+    last = _last_frame_at.get(cam_key)
+    if last is None:
+        # Allow generous warmup before the first JPEG frame arrives.
+        return bool(started and now - started > PREVIEW_WARMUP_S)
+    return now - last > PREVIEW_STALE_S
 
 
 def _drop_proc_locked(cam_key: str) -> None:
@@ -118,7 +121,7 @@ def _start_ffmpeg(cam_key: str, source_url: str) -> subprocess.Popen | None:
         "-loglevel",
         "error",
         "-fflags",
-        "nobuffer+flush_packets",
+        "nobuffer",
         "-flags",
         "low_delay",
         "-probesize",
@@ -128,22 +131,7 @@ def _start_ffmpeg(cam_key: str, source_url: str) -> subprocess.Popen | None:
     ]
     url = source_url.lower()
     if url.startswith("rtsp://"):
-        cmd.extend(
-            [
-                "-rtsp_transport",
-                "tcp",
-                "-max_delay",
-                "500000",
-                "-reorder_queue_size",
-                "0",
-                "-reconnect",
-                "1",
-                "-reconnect_streamed",
-                "1",
-                "-reconnect_delay_max",
-                "2",
-            ]
-        )
+        cmd.extend(["-rtsp_transport", "tcp"])
     cmd.extend(
         [
             "-i",
@@ -169,9 +157,8 @@ def _start_ffmpeg(cam_key: str, source_url: str) -> subprocess.Popen | None:
         if sys.platform == "win32":
             popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
         proc = subprocess.Popen(cmd, **popen_kw)
-        now = time.monotonic()
-        _proc_started_at[cam_key] = now
-        _last_frame_at[cam_key] = now
+        _proc_started_at[cam_key] = time.monotonic()
+        _last_frame_at[cam_key] = None
         return proc
     except Exception:
         return None
@@ -242,7 +229,7 @@ class _PreviewHandler(BaseHTTPRequestHandler):
                     while True:
                         if time.monotonic() - stream_start > STREAM_MAX_AGE_S:
                             break
-                        if _proc_is_stale(cam, proc):
+                        if proc.poll() is not None:
                             break
                         chunk = proc.stdout.read(4096)
                         if not chunk:

@@ -215,30 +215,12 @@
     .top.simpleMode .panel {
       min-width: 0;
     }
-    /* In simple mode, right column (Focus + PTZ + Speed) is hidden unless editing */
+    /* In simple mode, right column (PTZ + Speed) is hidden unless editing */
     .top.simpleMode .rightColContent {
       display: none !important;
     }
     .top.simpleMode .panel.editMode .rightColContent {
       display: block !important;
-    }
-    .top.simpleMode .panel.editMode .rightColContent .focusControlBox {
-      display: none !important;
-    }
-    .focusControlBox {
-      display: inline-flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-      padding: 10px 12px;
-      border: 1px solid #d1d9e0;
-      border-radius: 10px;
-      background: #f8fafc;
-      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-    }
-    .focusControlBox .focusManualBtn {
-      min-width: 52px;
-      font-weight: 600;
     }
     /* Switch: own box in the grid between the two camera panels */
     #simpleModeSwitchWrap {
@@ -1572,13 +1554,6 @@
         </div>
 
         <div class="rightColContent hideInSimpleMode">
-          <div class="focusControlBox">
-            <button class="primary" id="cam1FocusOn" onclick="focusAuto('cam1')">Auto</button>
-            <button class="ghost" id="cam1FocusOff" onclick="focusManual('cam1')">Manual</button>
-            <button type="button" class="ghost focusManualBtn" id="cam1FocusIn" onpointerdown="focusDown('cam1','focus_in')" onpointerup="focusUp('cam1')" onpointercancel="focusUp('cam1')" aria-label="Focus in">In</button>
-            <button type="button" class="ghost focusManualBtn" id="cam1FocusOut" onpointerdown="focusDown('cam1','focus_out')" onpointerup="focusUp('cam1')" onpointercancel="focusUp('cam1')" aria-label="Focus out">Out</button>
-          </div>
-
                     <div class="ptz">
             <div></div>
             <button type="button" onpointerdown="ptzDown('cam1','up')" onpointerup="ptzUp('cam1')" onpointercancel="ptzUp('cam1')" aria-label="Pan up">&#9650;</button>
@@ -1601,9 +1576,9 @@
           <div class="speedWrap">
             <div class="speedHdr">
               <div class="small">Speed</div>
-              <div class="speedPct" id="cam1SpeedPct">60%</div>
+              <div class="speedPct" id="cam1SpeedPct">0%</div>
             </div>
-            <input class="speed" id="cam1Speed" type="range" min="0" max="100" value="60"
+            <input class="speed" id="cam1Speed" type="range" min="0" max="100" value="0"
                    oninput="speedChanged('cam1')" />
             <div class="speedLabels">
               <span>Slow</span>
@@ -1655,13 +1630,6 @@
         </div>
 
         <div class="rightColContent hideInSimpleMode">
-          <div class="focusControlBox">
-            <button class="primary" id="cam2FocusOn" onclick="focusAuto('cam2')">Auto</button>
-            <button class="ghost" id="cam2FocusOff" onclick="focusManual('cam2')">Manual</button>
-            <button type="button" class="ghost focusManualBtn" id="cam2FocusIn" onpointerdown="focusDown('cam2','focus_in')" onpointerup="focusUp('cam2')" onpointercancel="focusUp('cam2')" aria-label="Focus in">In</button>
-            <button type="button" class="ghost focusManualBtn" id="cam2FocusOut" onpointerdown="focusDown('cam2','focus_out')" onpointerup="focusUp('cam2')" onpointercancel="focusUp('cam2')" aria-label="Focus out">Out</button>
-          </div>
-
                     <div class="ptz">
             <div></div>
             <button type="button" onpointerdown="ptzDown('cam2','up')" onpointerup="ptzUp('cam2')" onpointercancel="ptzUp('cam2')" aria-label="Pan up">&#9650;</button>
@@ -1684,9 +1652,9 @@
           <div class="speedWrap">
             <div class="speedHdr">
               <div class="small">Speed</div>
-              <div class="speedPct" id="cam2SpeedPct">60%</div>
+              <div class="speedPct" id="cam2SpeedPct">0%</div>
             </div>
-            <input class="speed" id="cam2Speed" type="range" min="0" max="100" value="60"
+            <input class="speed" id="cam2Speed" type="range" min="0" max="100" value="0"
                    oninput="speedChanged('cam2')" />
             <div class="speedLabels">
               <span>Slow</span>
@@ -1873,8 +1841,8 @@
 
 <script>
   const state = {
-    cam1: { activePreset: null, edit: false, trackingOn: null, focusOn: null },
-    cam2: { activePreset: null, edit: false, trackingOn: null, focusOn: null },
+    cam1: { activePreset: null, edit: false, trackingOn: null },
+    cam2: { activePreset: null, edit: false, trackingOn: null },
     obsConfig: null,
     lockControlsUntil: { cam1: 0, cam2: 0 },
     currentLiveCam: "cam1",
@@ -1882,7 +1850,6 @@
   };
 
   // --- speed persistence ---
-  let speedSaveTimers = { cam1: null, cam2: null };
   // OBS: show "Connected" only once per connect; hide after 3s
   let obsConnectedShown = { cam1: false, cam2: false };
   let obsConnectedHideTimers = { cam1: null, cam2: null };
@@ -2411,24 +2378,6 @@
     if (panel) panel.classList.toggle("trackingOn", on);
   }
 
-  function setFocusModeUi(cam, autoFocusOn) {
-    state[cam].focusOn = !!autoFocusOn;
-    updateFocusButtons(cam);
-  }
-
-  function updateFocusButtons(cam) {
-    const autoBtn = document.getElementById(cam + "FocusOn");
-    const manualBtn = document.getElementById(cam + "FocusOff");
-    if (!autoBtn || !manualBtn) return;
-    const auto = state[cam].focusOn === true;
-    autoBtn.classList.toggle("primary", auto);
-    autoBtn.classList.toggle("ghost", !auto);
-    manualBtn.classList.toggle("primary", !auto);
-    manualBtn.classList.toggle("ghost", auto);
-    autoBtn.setAttribute("aria-pressed", auto ? "true" : "false");
-    manualBtn.setAttribute("aria-pressed", auto ? "false" : "true");
-  }
-
   async function ensureTrackingOff(cam) {
     try {
       if (!window.pywebview?.api?.tracking_off) return false;
@@ -2454,17 +2403,6 @@
     } catch (e) {}
   }
 
-  async function fetchFocusStatus(cam) {
-    try {
-      if (!window.pywebview?.api?.get_focus_status) return;
-      const [ok, value] = await window.pywebview.api.get_focus_status(cam);
-      if (ok && value !== undefined && value !== null) {
-        state[cam].focusOn = !!value;
-        updateFocusButtons(cam);
-      }
-    } catch (e) {}
-  }
-
   async function trackingOn(cam) {
     status(cam, "Turning tracking ON...");
     const [ok, resp] = await window.pywebview.api.tracking_on(cam);
@@ -2483,30 +2421,6 @@
       updateTrackingButtons(cam);
     }
     status(cam, ok ? "Tracking OFF ✓" : ("Error: " + resp));
-  }
-
-  async function focusAuto(cam) {
-    setFocusModeUi(cam, true);
-    status(cam, "Auto focus...");
-    const [ok, resp] = await window.pywebview.api.focus_on(cam);
-    if (!ok) {
-      await fetchFocusStatus(cam);
-      status(cam, "Error: " + resp);
-      return;
-    }
-    status(cam, "Auto focus ✓");
-  }
-
-  async function focusManual(cam) {
-    setFocusModeUi(cam, false);
-    status(cam, "Manual focus...");
-    const [ok, resp] = await window.pywebview.api.focus_off(cam);
-    if (!ok) {
-      await fetchFocusStatus(cam);
-      status(cam, "Error: " + resp);
-      return;
-    }
-    status(cam, "Manual focus ✓");
   }
 
   async function presetRecall(cam, preset, label) {
@@ -2532,39 +2446,15 @@
   // -------- Speed slider logic --------
   function getSpeed(cam){
     const el = dom[cam + "Speed"];
-    const pct = el ? parseInt(el.value || "60", 10) : 60;
+    const pct = el ? parseInt(el.value || "0", 10) : 0;
     const speed = Math.max(1, Math.min(10, Math.round((pct / 100) * 9) + 1));
     return { pct, speed };
-  }
-
-  function saveSpeedDebounced(cam){
-    if (!window.pywebview?.api?.set_speed_pct) return;
-    const el = dom[cam + "Speed"];
-    if (!el) return;
-    const pct = parseInt(el.value || "60", 10);
-
-    if (speedSaveTimers[cam]) clearTimeout(speedSaveTimers[cam]);
-    speedSaveTimers[cam] = setTimeout(async () => {
-      try { await window.pywebview.api.set_speed_pct(cam, pct); } catch(e) {}
-    }, 250);
   }
 
   function speedChanged(cam){
     const { pct } = getSpeed(cam);
     const pctEl = dom[cam + "SpeedPct"];
     if (pctEl) pctEl.textContent = pct + "%";
-    saveSpeedDebounced(cam);
-  }
-
-  async function loadSavedSpeed(cam){
-    try{
-      if (!window.pywebview?.api?.get_speed_pct) return;
-      const [ok, pct] = await window.pywebview.api.get_speed_pct(cam);
-      if (!ok) return;
-      const el = dom[cam + "Speed"];
-      if (el) el.value = String(pct);
-      speedChanged(cam);
-    }catch(e){}
   }
 
   // -------- PTZ --------
@@ -2578,34 +2468,6 @@
     const { speed } = getSpeed(cam);
     const [ok, resp] = await window.pywebview.api.ptz_move(cam, "stop", speed);
     if (!ok) status(cam, "PTZ Error: " + resp);
-  }
-
-  async function focusDown(cam, direction) {
-    setFocusModeUi(cam, false);
-    const { speed } = getSpeed(cam);
-    const api = window.pywebview?.api;
-    if (api?.focus_manual) {
-      const [ok, resp] = await api.focus_manual(cam, direction, speed);
-      if (!ok) {
-        await fetchFocusStatus(cam);
-        status(cam, "Focus: " + resp);
-      }
-      return;
-    }
-    const [ok, resp] = await api.ptz_move(cam, direction, speed);
-    if (!ok) status(cam, "Focus: " + resp);
-  }
-
-  async function focusUp(cam) {
-    const { speed } = getSpeed(cam);
-    const api = window.pywebview?.api;
-    if (api?.focus_manual) {
-      const [ok, resp] = await api.focus_manual(cam, "focus_stop", speed);
-      if (!ok) status(cam, "Focus stop: " + resp);
-      return;
-    }
-    const [ok, resp] = await api.ptz_move(cam, "stop", speed);
-    if (!ok) status(cam, "Focus stop: " + resp);
   }
 
   // -------- Switching Hold Time: lock controls for camera that became live --------
@@ -2772,12 +2634,6 @@
     if (on) {
       (async function() {
         try {
-          if (window.pywebview?.api?.focus_on) {
-            await window.pywebview.api.focus_on("cam1").catch(function() {});
-            await window.pywebview.api.focus_on("cam2").catch(function() {});
-            setFocusModeUi("cam1", true);
-            setFocusModeUi("cam2", true);
-          }
           if (window.pywebview?.api?.tracking_off) {
             await window.pywebview.api.tracking_off("cam1").catch(function() {});
             await window.pywebview.api.tracking_off("cam2").catch(function() {});
@@ -4708,11 +4564,6 @@
     updateTrackingButtons("cam2");
     await ensureTrackingOff("cam1");
     await ensureTrackingOff("cam2");
-    fetchFocusStatus("cam1");
-    fetchFocusStatus("cam2");
-
-    await loadSavedSpeed("cam1");
-    await loadSavedSpeed("cam2");
 
     pollOnline("cam1");
     pollOnline("cam2");

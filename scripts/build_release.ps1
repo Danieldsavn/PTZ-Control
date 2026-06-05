@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
-$Version = "4.2"
+$Version = "4.2.1"
 Write-Host "Building PTZ-Control v$Version"
 
 # Sync version.json
@@ -48,7 +48,7 @@ $manifest = @{
     version       = $Version
     download_url  = "https://github.com/Danieldsavn/PTZ-Control/releases/download/v$Version/PTZ-Control.exe"
     sha256        = $hash
-    release_notes = "Preview auto-recovery after camera reboot/minimize; lag watchdog restarts FFmpeg; compact edit-mode preset buttons; settings persist in AppData (v4.1)."
+    release_notes = "Hotfix: restore camera preview connect (fix v4.2 FFmpeg stale watchdog). PTZ speed always starts at slowest (no saved speed). Removed focus controls (Auto/Manual/In/Out)."
 } | ConvertTo-Json -Depth 3
 $manifest | Set-Content -Path "release\update.json" -Encoding UTF8
 Write-Host "Wrote release\update.json"

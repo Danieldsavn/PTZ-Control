@@ -119,8 +119,6 @@ VISCA_TIMEOUT = 1.5  # UDP send won't block much, but keep for socket timeout
 VALID_PRESET_COUNTS = (2, 4, 6, 8, 10, 12)
 DEFAULT_PRESET_COUNT = 6
 SIMPLE_PRESETS = (13, 14, 15, 16, 17, 18)  # 6 presets always used for simple mode
-DEFAULT_SPEED_PCT = 60  # 0-100 slider percent, persisted
-
 
 # -------- paths (important for PyInstaller) --------
 def _exe_dir():
@@ -347,36 +345,6 @@ def _visca_zoom(direction: str, speed: int):
     return bytes([0x81, 0x01, 0x04, 0x07, z, 0xFF])
 
 
-def _visca_focus(direction: str, speed: int):
-    """
-    VISCA Focus (manual):
-      81 01 04 08 2p FF  (far / out)
-      81 01 04 08 3p FF  (near / in)
-      81 01 04 08 00 FF  (stop)
-    p = 0..7
-    """
-    speed = _clamp(speed, 1, 10)
-    p = int(round((speed / 10) * 7)) or 1
-    p = _clamp(p, 0, 7)
-
-    if direction == "focus_in":
-        z = 0x30 | p
-    elif direction == "focus_out":
-        z = 0x20 | p
-    elif direction in ("stop", "focus_stop"):
-        z = 0x00
-    else:
-        raise ValueError(f"Unknown focus direction: {direction}")
-
-    return bytes([0x81, 0x01, 0x04, 0x08, z, 0xFF])
-
-
-def _visca_autofocus(on: bool) -> bytes:
-    """VISCA AF mode: 04 38 02 = auto on, 04 38 03 = manual."""
-    mode = 0x02 if on else 0x03
-    return bytes([0x81, 0x01, 0x04, 0x38, mode, 0xFF])
-
-
 def _visca_preset_recall(preset: int):
     """
     Preset recall:
@@ -395,7 +363,7 @@ def _visca_preset_set(preset: int):
     return bytes([0x81, 0x01, 0x04, 0x3F, 0x01, preset & 0xFF, 0xFF])
 
 
-# ---------------- Presets + label + speed persistence (one file) ----------------
+# ---------------- Presets + label persistence (one file) ----------------
 def _normalize_preset_count(data):
     """Return valid preset_count (2,4,6,8,10,12) from state/data."""
     n = int(data.get("preset_count", DEFAULT_PRESET_COUNT))
@@ -405,11 +373,10 @@ def _normalize_preset_count(data):
 def _default_state(preset_count=None):
     if preset_count is None or preset_count not in VALID_PRESET_COUNTS:
         preset_count = DEFAULT_PRESET_COUNT
-    data = {"preset_count": preset_count, "labels": {}, "simple_labels": {}, "speed_pct": {}, "camera_titles": {}, "camera_ips": {}}
+    data = {"preset_count": preset_count, "labels": {}, "simple_labels": {}, "camera_titles": {}, "camera_ips": {}}
     for cam in CAMERAS.keys():
         data["labels"][cam] = {str(i): f"Preset {i}" for i in range(1, preset_count + 1)}
         data["simple_labels"][cam] = {str(i): f"Preset {i}" for i in SIMPLE_PRESETS}
-        data["speed_pct"][cam] = DEFAULT_SPEED_PCT
         data["camera_titles"][cam] = ""
         data["camera_ips"][cam] = CAMERAS[cam]["ip"]
     return data
@@ -427,7 +394,7 @@ def _load_state():
     """
     Supports:
       New format:
-        {"labels": {"cam1": {...}, "cam2": {...}}, "speed_pct": {"cam1": 60, "cam2": 60}}
+        {"labels": {"cam1": {...}, "cam2": {...}}}
       Old format (labels only):
         {"cam1": {...}, "cam2": {...}}
     """
@@ -457,8 +424,7 @@ def _load_state():
             if "labels" not in data or not isinstance(data["labels"], dict):
                 data["labels"] = base["labels"]
 
-            if "speed_pct" not in data or not isinstance(data["speed_pct"], dict):
-                data["speed_pct"] = base["speed_pct"]
+            data.pop("speed_pct", None)
 
             if "camera_titles" not in data or not isinstance(data["camera_titles"], dict):
                 data["camera_titles"] = base["camera_titles"]
@@ -494,15 +460,6 @@ def _load_state():
                     if k not in data["labels"][cam] or not isinstance(data["labels"][cam].get(k), str):
                         data["labels"][cam][k] = base_labels.get(k, f"Preset {i}")
                 data["labels"][cam] = {k: v for k, v in data["labels"][cam].items() if k.isdigit() and 1 <= int(k) <= preset_count}
-
-                # speed pct
-                if cam not in data["speed_pct"]:
-                    data["speed_pct"][cam] = base["speed_pct"][cam]
-                try:
-                    v = int(data["speed_pct"][cam])
-                    data["speed_pct"][cam] = max(0, min(100, v))
-                except Exception:
-                    data["speed_pct"][cam] = base["speed_pct"][cam]
 
             _save_state(data)
             return data
@@ -1919,147 +1876,6 @@ class Api:
         except Exception:
             return True, None
 
-    def _camera_focus_http(self, cam: str, direction: str, speed: int = 5) -> tuple[bool, str]:
-        """Manual focus via camera HTTP (Brickcom / PTZOptics-style param.cgi)."""
-        spd = max(1, min(7, int(round(speed / 10.0 * 7)) or 1))
-        if direction == "focus_in":
-            ptz_cmds = [f"FOCUSIN{spd}_mfocus", "FOCUSIN_mfocus", "near"]
-            fz_move = "near"
-        elif direction == "focus_out":
-            ptz_cmds = [f"FOCUSOUT{spd}_mfocus", "FOCUSOUT_mfocus", "far"]
-            fz_move = "far"
-        else:
-            ptz_cmds = ["FOCUSSTOP_mfocus", "stop"]
-            fz_move = None
-
-        for cmd in ptz_cmds:
-            try:
-                ok, _ = _get(
-                    cam,
-                    "/cgi-bin/param.cgi",
-                    params={"ptzcmd": cmd},
-                    timeout=HTTP_TIMEOUT,
-                )
-                if ok:
-                    return True, cmd
-            except Exception:
-                continue
-
-        if fz_move:
-            try:
-                ok, _ = _get(
-                    cam,
-                    "/cgi-bin/focuszoom.cgi",
-                    params={"FzMove": fz_move},
-                    timeout=HTTP_TIMEOUT,
-                )
-                if ok:
-                    return True, f"FzMove={fz_move}"
-            except Exception:
-                pass
-        elif direction == "focus_stop":
-            for params in (
-                {"FzMove": "stop", "FzTarget": "focus"},
-                {"FzMove": "stop"},
-            ):
-                try:
-                    ok, _ = _get(
-                        cam,
-                        "/cgi-bin/focuszoom.cgi",
-                        params=params,
-                        timeout=HTTP_TIMEOUT,
-                    )
-                    if ok:
-                        return True, "FzMove=stop"
-                except Exception:
-                    continue
-        return False, "No focus command accepted"
-
-    def focus_manual(self, cam: str, direction: str, speed: int = 5):
-        """Manual focus in/out/stop (locks auto focus, then HTTP; VISCA fallback)."""
-        try:
-            speed = _clamp(speed, 1, 10)
-            if direction in ("focus_in", "focus_out"):
-                self.focus_off(cam)
-            ok_http, detail = self._camera_focus_http(cam, direction, speed)
-            if ok_http:
-                return True, detail
-            if direction in ("focus_in", "focus_out", "focus_stop"):
-                return _visca_send_udp(cam, _visca_focus(direction, speed))
-            return False, f"Unknown focus direction: {direction}"
-        except Exception as e:
-            return False, f"focus_manual error: {e}"
-
-    def _focus_mode_http(self, cam: str, manual: bool) -> bool:
-        cmd = "LOCK_mfocus" if manual else "UNLOCK_mfocus"
-        try:
-            ok, resp = _get(
-                cam,
-                "/cgi-bin/param.cgi",
-                params={"ptzcmd": cmd},
-                timeout=HTTP_TIMEOUT,
-            )
-            if not ok or resp is None:
-                return False
-            text = str(resp).upper()
-            if "ERROR" in text or "FAIL" in text or "INVALID" in text:
-                return False
-            return True
-        except Exception:
-            return False
-
-    # --------- Focus (auto focus on / off) ---------
-    def focus_on(self, cam: str):
-        """Auto focus on (UNLOCK). Sony/Brickcom: param.cgi?ptzcmd=UNLOCK_mfocus"""
-        try:
-            if self._focus_mode_http(cam, manual=False):
-                return True, "Focus auto"
-            ok, msg = _visca_send_udp(cam, _visca_autofocus(True))
-            return (ok, "Focus auto" if ok else msg)
-        except Exception as e:
-            return False, str(e)
-
-    def focus_off(self, cam: str):
-        """Auto focus off / manual (LOCK). Sony/Brickcom: param.cgi?ptzcmd=LOCK_mfocus"""
-        try:
-            if self._focus_mode_http(cam, manual=True):
-                return True, "Focus manual"
-            ok, msg = _visca_send_udp(cam, _visca_autofocus(False))
-            return (ok, "Focus manual" if ok else msg)
-        except Exception as e:
-            return False, str(e)
-
-    def get_focus_status(self, cam: str):
-        """Returns (ok, value) where value is True (auto), False (manual), or None (unknown)."""
-        try:
-            ok, resp = _get(cam, "/cgi-bin/param.cgi", params={"inquiry": "mfocus"}, timeout=2.0)
-            if not ok or resp is None:
-                return True, None
-            text = str(resp) if not isinstance(resp, str) else resp
-            if isinstance(resp, dict):
-                v = resp.get("mfocus") or resp.get("focus")
-                if v is not None:
-                    vs = str(v).strip().upper()
-                    if vs in ("UNLOCK", "AUTO", "1", "ON", "TRUE"):
-                        return True, True
-                    if vs in ("LOCK", "MANUAL", "0", "OFF", "FALSE"):
-                        return True, False
-            upper = text.upper()
-            m = re.search(r"MFOCUS\s*[=:]\s*(\w+)", upper)
-            if m:
-                val = m.group(1)
-                if val in ("UNLOCK", "AUTO", "1", "ON"):
-                    return True, True
-                if val in ("LOCK", "MANUAL", "0", "OFF"):
-                    return True, False
-            if "UNLOCK" in upper or re.search(r"\bAUTO\b", upper):
-                return True, True
-            if re.search(r"\bLOCK\b", upper) or re.search(r"\bMANUAL\b", upper):
-                return True, False
-            return True, None
-        except Exception:
-            return True, None
-
     # --------- Online check (for dot indicator) ---------
     def camera_ping(self, cam: str):
         """
@@ -2203,35 +2019,10 @@ class Api:
         except Exception as e:
             return False, f"set_camera_title error: {e}"
 
-    # --------- Speed persistence (0-100 slider) ---------
-    def get_speed_pct(self, cam: str):
-        try:
-            sp = self._state.get("speed_pct", {})
-            if cam not in sp:
-                sp[cam] = DEFAULT_SPEED_PCT
-                self._state["speed_pct"] = sp
-                _save_state(self._state)
-            return True, int(sp[cam])
-        except Exception as e:
-            return False, f"get_speed_pct error: {e}"
-
-    def set_speed_pct(self, cam: str, pct: int):
-        try:
-            pct = int(pct)
-            pct = max(0, min(100, pct))
-            sp = self._state.get("speed_pct", {})
-            sp[cam] = pct
-            self._state["speed_pct"] = sp
-            _save_state(self._state)
-            return True, pct
-        except Exception as e:
-            return False, f"set_speed_pct error: {e}"
-
     # --------- PTZ Move (VISCA UDP) ---------
     def ptz_move(self, cam: str, direction: str, speed: int = 5):
         """
-        direction: up/down/left/right/stop/zoom_in/zoom_out/zoom_stop/focus_in/focus_out
-        stop stops pan/tilt, zoom, and focus
+        direction: up/down/left/right/stop/zoom_in/zoom_out/zoom_stop
         """
         try:
             speed = _clamp(speed, 1, 10)
@@ -2239,18 +2030,14 @@ class Api:
             if direction == "stop":
                 ok1, r1 = _visca_send_udp(cam, _visca_ptz_drive("stop", speed))
                 ok2, r2 = _visca_send_udp(cam, _visca_zoom("zoom_stop", speed))
-                ok3, r3 = self.focus_manual(cam, "focus_stop", speed)
-                ok = ok1 and ok2 and ok3[0]
-                return ok, ("stopped" if ok else f"{r1} | {r2} | {r3[1]}")
+                ok = ok1 and ok2
+                return ok, ("stopped" if ok else f"{r1} | {r2}")
 
             if direction in ("up", "down", "left", "right"):
                 return _visca_send_udp(cam, _visca_ptz_drive(direction, speed))
 
             if direction in ("zoom_in", "zoom_out", "zoom_stop"):
                 return _visca_send_udp(cam, _visca_zoom(direction, speed))
-
-            if direction in ("focus_in", "focus_out", "focus_stop"):
-                return self.focus_manual(cam, direction, speed)
 
             return False, f"Unknown direction: {direction}"
         except Exception as e:
@@ -2704,7 +2491,6 @@ def _instrument_api_methods() -> None:
         "open_logs_folder",
         "obs_get_status",
         "get_camera_preview_urls",
-        "get_speed_pct",
         "camera_ping",
         "get_tracking_status",
         "midi_get_config",
@@ -2715,7 +2501,6 @@ def _instrument_api_methods() -> None:
         "obs_",
         "midi_",
         "tracking_",
-        "focus_",
         "zoom_",
         "preset_",
         "cut_",
