@@ -1975,6 +1975,8 @@
   let streamBarPollDebounceTimer = null;
   let midiProPresenterIndicatorTimer = null;
   let serviceCueOverlayOpen = false;
+  let activeServiceCueId = null;
+  let serviceCueCountdownShown = null;
   let serviceCuesDisableConfirmOpen = false;
   let lastTrackingPollAt = 0;
   let previewRefreshIntervalId = null;
@@ -2144,21 +2146,28 @@
     const partEl = document.getElementById("serviceCuePartLabel");
     const countdownEl = document.getElementById("serviceCueCountdown");
     if (!overlay) return;
+    activeServiceCueId = evt.cue || null;
+    serviceCueCountdownShown = evt.remaining_sec != null ? Math.max(0, evt.remaining_sec) : null;
     serviceCueOverlayOpen = true;
     overlay.classList.add("open");
     overlay.setAttribute("aria-hidden", "false");
     if (partEl) partEl.textContent = evt.label || evt.part || "Service cue";
-    if (countdownEl) countdownEl.textContent = String(evt.remaining_sec != null ? evt.remaining_sec : "");
+    if (countdownEl) countdownEl.textContent = String(serviceCueCountdownShown != null ? serviceCueCountdownShown : "");
     renderServiceCueSteps(evt.steps || [], evt.step_index || 0);
     const cancelBtn = document.getElementById("serviceCueCancelBtn");
     if (cancelBtn) cancelBtn.focus();
   }
 
   function updateServiceCueModal(evt) {
+    if (activeServiceCueId && evt.cue && evt.cue !== activeServiceCueId) return;
     if (!serviceCueOverlayOpen) openServiceCueModal(evt);
     const countdownEl = document.getElementById("serviceCueCountdown");
     if (countdownEl && evt.remaining_sec != null) {
-      countdownEl.textContent = String(Math.max(0, evt.remaining_sec));
+      const next = Math.max(0, evt.remaining_sec);
+      if (serviceCueCountdownShown == null || next <= serviceCueCountdownShown) {
+        serviceCueCountdownShown = next;
+        countdownEl.textContent = String(next);
+      }
     }
     renderServiceCueSteps(evt.steps || [], evt.step_index != null ? evt.step_index : 0);
   }
@@ -2167,6 +2176,8 @@
     const overlay = document.getElementById("serviceCueOverlay");
     if (!overlay) return;
     serviceCueOverlayOpen = false;
+    activeServiceCueId = null;
+    serviceCueCountdownShown = null;
     overlay.classList.remove("open");
     overlay.setAttribute("aria-hidden", "true");
   }
@@ -2193,6 +2204,7 @@
         break;
       case "service_cue_end":
       case "service_cue_cancelled":
+        if (activeServiceCueId && evt.cue && evt.cue !== activeServiceCueId) return;
         closeServiceCueModal();
         pollObsStatus();
         break;

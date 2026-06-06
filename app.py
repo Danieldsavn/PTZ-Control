@@ -1750,6 +1750,11 @@ def _midi_recall_preset(cam: str, preset: int) -> tuple[bool, str]:
 def _midi_trigger_scene(scene_id: str) -> None:
     meta = MIDI_SCENES.get(scene_id, {})
     label = meta.get("label", scene_id)
+
+    if _get_service_cue_controller().is_running():
+        app_log.midi("MIDI ignored (service cue running)", {"cue": scene_id, "label": label})
+        return
+
     app_log.midi("Trigger cue", {"cue": scene_id, "label": label})
 
     if scene_id in SERVICE_SCENE_PART:

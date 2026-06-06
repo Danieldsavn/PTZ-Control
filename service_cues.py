@@ -50,6 +50,12 @@ class ServiceCueController:
         self._thread: threading.Thread | None = None
         self._current_part: str | None = None
         self._last_started_at: dict[str, float] = {}
+        self._ends_at: float | None = None
+        self._active = False
+
+    def is_running(self) -> bool:
+        with self._lock:
+            return bool(self._active or (self._thread and self._thread.is_alive()))
 
     def get_state(self) -> dict[str, Any]:
         with self._lock:
@@ -98,6 +104,7 @@ class ServiceCueController:
         )
         with self._lock:
             self._thread = thread
+            self._active = True
         thread.start()
         return True, "Service cue started"
 
@@ -113,27 +120,32 @@ class ServiceCueController:
             app_log.midi("Service cue failed", {"cue": scene_id, "error": str(e)})
             self._push_ui({"type": "service_cue_end", "cue": scene_id, "error": str(e)})
         finally:
+            self._ends_at = None
             with self._lock:
+                self._active = False
                 if self._thread is threading.current_thread():
                     self._thread = None
+
+    def _remaining(self) -> float:
+        if self._ends_at is None:
+            return 0.0
+        return max(0.0, self._ends_at - time.monotonic())
 
     def _sleep(self, seconds: float, scene_id: str, step_index: int, steps: list[str]) -> None:
         end = time.monotonic() + max(0.0, seconds)
         while True:
             if self._cancel.is_set():
                 raise ServiceCueCancelled()
-            remaining_total = max(0.0, end - time.monotonic())
-            self._progress(scene_id, step_index, steps, remaining_total)
-            if remaining_total <= 0:
+            self._progress(scene_id, step_index, steps)
+            if time.monotonic() >= end:
                 break
-            time.sleep(min(0.25, remaining_total))
+            time.sleep(min(0.25, end - time.monotonic()))
 
     def _progress(
         self,
         scene_id: str,
         step_index: int,
         steps: list[str],
-        remaining_sec: float,
     ) -> None:
         self._push_ui(
             {
@@ -143,11 +155,12 @@ class ServiceCueController:
                 "label": SERVICE_SCENE_LABEL.get(scene_id, scene_id),
                 "step_index": step_index,
                 "steps": steps,
-                "remaining_sec": int(max(0, round(remaining_sec))),
+                "remaining_sec": int(max(0, round(self._remaining()))),
             }
         )
 
     def _begin(self, scene_id: str, steps: list[str], total_sec: float) -> None:
+        self._ends_at = time.monotonic() + max(0.0, total_sec)
         self._push_ui(
             {
                 "type": "service_cue_start",
@@ -166,9 +179,8 @@ class ServiceCueController:
         scene_id: str,
         step_index: int,
         steps: list[str],
-        remaining_sec: float,
     ) -> None:
-        self._progress(scene_id, step_index, steps, remaining_sec)
+        self._progress(scene_id, step_index, steps)
         if self._cancel.is_set():
             raise ServiceCueCancelled()
 
@@ -176,8 +188,8 @@ class ServiceCueController:
     def _other_cam(cam: str) -> str:
         return "cam2" if cam == "cam1" else "cam1"
 
-    def _tracking_off_both(self, scene_id: str, step_index: int, steps: list[str], remaining: float) -> None:
-        self._step(scene_id, step_index, steps, remaining)
+    def _tracking_off_both(self, scene_id: str, step_index: int, steps: list[str]) -> None:
+        self._step(scene_id, step_index, steps)
         for cam in ("cam1", "cam2"):
             self._tracking_set(cam, False)
             self._push_ui({"type": "tracking", "cam": cam, "on": False})
@@ -227,11 +239,11 @@ class ServiceCueController:
         total = 5.0
         self._begin(scene_id, steps, total)
 
-        self._step(scene_id, 0, steps, total)
+        self._step(scene_id, 0, steps)
         self._title(False)
-        self._step(scene_id, 1, steps, total)
+        self._step(scene_id, 1, steps)
         self._lyrics(False)
-        self._step(scene_id, 2, steps, total)
+        self._step(scene_id, 2, steps)
         self._full_screen_slide()
 
         self._sleep(5.0, scene_id, 2, steps)
@@ -239,10 +251,8 @@ class ServiceCueController:
     def _run_worship(self) -> None:
         scene_id = "worship_transition"
         steps = [
-            "Turn off auto tracking on both cameras",
-            "Move standby camera to preset 11",
-            "Turn lyrics on while camera moves",
-            "Wait 3 seconds for camera move",
+            "Turn off tracking on both cameras",
+            "Standby camera → preset 11, lyrics on",
             "Auto transition to standby camera",
         ]
         total = 3.0 + 2.0
@@ -250,81 +260,64 @@ class ServiceCueController:
         sm = self._get_switcher()
         standby = self._non_live_cam(sm)
 
-        self._tracking_off_both(scene_id, 0, steps, total)
-        self._step(scene_id, 1, steps, total - 0.5)
+        self._tracking_off_both(scene_id, 0, steps)
+        self._step(scene_id, 1, steps)
         self._recall(standby, 11)
-
-        self._step(scene_id, 2, steps, total - 1.0)
         self._lyrics(True)
 
-        self._sleep(3.0, scene_id, 3, steps)
-        self._step(scene_id, 4, steps, 1.0)
+        self._sleep(3.0, scene_id, 1, steps)
+        self._step(scene_id, 2, steps)
         self._fade(standby)
 
     def _run_sermon(self) -> None:
         scene_id = "sermon_transition"
         steps = [
-            "Turn off auto tracking on both cameras",
-            "Move standby camera to preset 3",
-            "Turn lyrics off while camera moves",
-            "Wait 3 seconds for camera move",
+            "Turn off tracking on both cameras",
+            "Standby camera → preset 3, lyrics off",
             "Auto transition to standby camera",
-            "Wait 3 seconds",
-            "Recall preset 1 on the other camera",
-            "Wait 3 seconds for preset",
-            "Turn on auto tracking on that camera",
-            "Wait 2 seconds",
+            "Other camera → preset 1, tracking on",
             "Cut to tracking camera",
-            "Wait 2 seconds",
-            "Turn title on",
-            "Wait 7 seconds",
-            "Turn title off",
+            "Title on, then off",
         ]
-        total = 3 + 3 + 3 + 3 + 2 + 2 + 7 + 4.0
+        total = 3 + 3 + 3 + 3 + 2 + 2 + 7
         self._begin(scene_id, steps, total)
         sm = self._get_switcher()
         standby = self._non_live_cam(sm)
 
-        self._tracking_off_both(scene_id, 0, steps, total)
-        self._step(scene_id, 1, steps, total - 0.5)
+        self._tracking_off_both(scene_id, 0, steps)
+        self._step(scene_id, 1, steps)
         self._recall(standby, 3)
-
-        self._step(scene_id, 2, steps, total - 1.0)
         self._lyrics(False)
 
-        self._sleep(3.0, scene_id, 3, steps)
-        self._step(scene_id, 4, steps, total - 4.0)
+        self._sleep(3.0, scene_id, 1, steps)
+        self._step(scene_id, 2, steps)
         self._fade(standby)
 
-        self._sleep(3.0, scene_id, 5, steps)
+        self._sleep(3.0, scene_id, 2, steps)
         tracking_cam = self._other_cam(standby)
-        self._step(scene_id, 6, steps, total - 10.0)
+        self._step(scene_id, 3, steps)
         self._recall(tracking_cam, 1)
 
-        self._sleep(3.0, scene_id, 7, steps)
-        self._step(scene_id, 8, steps, total - 16.0)
+        self._sleep(3.0, scene_id, 3, steps)
         self._tracking_set(tracking_cam, True)
         self._push_ui({"type": "tracking", "cam": tracking_cam, "on": True})
 
-        self._sleep(2.0, scene_id, 9, steps)
-        self._step(scene_id, 10, steps, total - 18.0)
+        self._sleep(2.0, scene_id, 3, steps)
+        self._step(scene_id, 4, steps)
         self._cut(tracking_cam)
 
-        self._sleep(2.0, scene_id, 11, steps)
-        self._step(scene_id, 12, steps, total - 20.0)
+        self._sleep(2.0, scene_id, 4, steps)
+        self._step(scene_id, 5, steps)
         self._title(True)
 
-        self._sleep(7.0, scene_id, 13, steps)
-        self._step(scene_id, 14, steps, 0.5)
+        self._sleep(7.0, scene_id, 5, steps)
         self._title(False)
 
     def _run_end(self) -> None:
         scene_id = "end_service_transition"
         steps = [
-            "Turn off auto tracking on both cameras",
-            "Move standby camera to preset 11",
-            "Turn lyrics off while camera moves",
-            "Wait 3 seconds for camera move",
+            "Turn off tracking on both cameras",
+            "Standby camera → preset 11, lyrics off",
             "Auto transition to standby camera",
         ]
         total = 3.0 + 2.0
@@ -332,13 +325,11 @@ class ServiceCueController:
         sm = self._get_switcher()
         standby = self._non_live_cam(sm)
 
-        self._tracking_off_both(scene_id, 0, steps, total)
-        self._step(scene_id, 1, steps, total - 0.5)
+        self._tracking_off_both(scene_id, 0, steps)
+        self._step(scene_id, 1, steps)
         self._recall(standby, 11)
-
-        self._step(scene_id, 2, steps, total - 1.0)
         self._lyrics(False)
 
-        self._sleep(3.0, scene_id, 3, steps)
-        self._step(scene_id, 4, steps, total - 3.0)
+        self._sleep(3.0, scene_id, 1, steps)
+        self._step(scene_id, 2, steps)
         self._fade(standby)
