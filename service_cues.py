@@ -51,6 +51,8 @@ class ServiceCueController:
         self._current_part: str | None = None
         self._last_started_at: dict[str, float] = {}
         self._ends_at: float | None = None
+        self._started_at: float | None = None
+        self._total_sec: float = 0.0
         self._active = False
 
     def is_running(self) -> bool:
@@ -121,6 +123,8 @@ class ServiceCueController:
             self._push_ui({"type": "service_cue_end", "cue": scene_id, "error": str(e)})
         finally:
             self._ends_at = None
+            self._started_at = None
+            self._total_sec = 0.0
             with self._lock:
                 self._active = False
                 if self._thread is threading.current_thread():
@@ -132,14 +136,24 @@ class ServiceCueController:
         return max(0.0, self._ends_at - time.monotonic())
 
     def _sleep(self, seconds: float, scene_id: str, step_index: int, steps: list[str]) -> None:
-        end = time.monotonic() + max(0.0, seconds)
+        deadline = time.monotonic() + max(0.0, seconds)
+        if self._ends_at is not None:
+            deadline = min(deadline, self._ends_at)
         while True:
             if self._cancel.is_set():
                 raise ServiceCueCancelled()
             self._progress(scene_id, step_index, steps)
-            if time.monotonic() >= end:
+            if time.monotonic() >= deadline:
                 break
-            time.sleep(min(0.25, end - time.monotonic()))
+            time.sleep(min(0.25, deadline - time.monotonic()))
+
+    def _wait_until_end(self, scene_id: str, step_index: int, steps: list[str]) -> None:
+        """Hold until the cue-wide countdown finishes."""
+        while self._remaining() > 0:
+            if self._cancel.is_set():
+                raise ServiceCueCancelled()
+            self._progress(scene_id, step_index, steps)
+            time.sleep(min(0.25, self._remaining()))
 
     def _progress(
         self,
@@ -155,12 +169,14 @@ class ServiceCueController:
                 "label": SERVICE_SCENE_LABEL.get(scene_id, scene_id),
                 "step_index": step_index,
                 "steps": steps,
-                "remaining_sec": int(max(0, round(self._remaining()))),
+                "total_sec": int(max(1, round(self._total_sec))),
             }
         )
 
     def _begin(self, scene_id: str, steps: list[str], total_sec: float) -> None:
-        self._ends_at = time.monotonic() + max(0.0, total_sec)
+        self._total_sec = max(0.0, total_sec)
+        self._started_at = time.monotonic()
+        self._ends_at = self._started_at + self._total_sec
         self._push_ui(
             {
                 "type": "service_cue_start",
@@ -168,7 +184,7 @@ class ServiceCueController:
                 "part": SERVICE_SCENE_PART.get(scene_id),
                 "label": SERVICE_SCENE_LABEL.get(scene_id, scene_id),
                 "steps": steps,
-                "remaining_sec": int(max(1, round(total_sec))),
+                "total_sec": int(max(1, round(self._total_sec))),
                 "step_index": 0,
             }
         )
@@ -246,7 +262,7 @@ class ServiceCueController:
         self._step(scene_id, 2, steps)
         self._full_screen_slide()
 
-        self._sleep(5.0, scene_id, 2, steps)
+        self._wait_until_end(scene_id, 2, steps)
 
     def _run_worship(self) -> None:
         scene_id = "worship_transition"
@@ -255,7 +271,8 @@ class ServiceCueController:
             "Standby camera → preset 11, lyrics on",
             "Auto transition to standby camera",
         ]
-        total = 3.0 + 2.0
+        # 3s preset wait + ~3s for recall, lyrics, and AUTO fade
+        total = 6.0
         self._begin(scene_id, steps, total)
         sm = self._get_switcher()
         standby = self._non_live_cam(sm)
@@ -268,6 +285,7 @@ class ServiceCueController:
         self._sleep(3.0, scene_id, 1, steps)
         self._step(scene_id, 2, steps)
         self._fade(standby)
+        self._wait_until_end(scene_id, 2, steps)
 
     def _run_sermon(self) -> None:
         scene_id = "sermon_transition"
@@ -279,7 +297,8 @@ class ServiceCueController:
             "Cut to tracking camera",
             "Title on, then off",
         ]
-        total = 3 + 3 + 3 + 3 + 2 + 2 + 7
+        # 20s of waits + ~5s for switcher/camera actions
+        total = 25.0
         self._begin(scene_id, steps, total)
         sm = self._get_switcher()
         standby = self._non_live_cam(sm)
@@ -312,6 +331,7 @@ class ServiceCueController:
 
         self._sleep(7.0, scene_id, 5, steps)
         self._title(False)
+        self._wait_until_end(scene_id, 5, steps)
 
     def _run_end(self) -> None:
         scene_id = "end_service_transition"
@@ -320,7 +340,7 @@ class ServiceCueController:
             "Standby camera → preset 11, lyrics off",
             "Auto transition to standby camera",
         ]
-        total = 3.0 + 2.0
+        total = 6.0
         self._begin(scene_id, steps, total)
         sm = self._get_switcher()
         standby = self._non_live_cam(sm)
@@ -333,3 +353,4 @@ class ServiceCueController:
         self._sleep(3.0, scene_id, 1, steps)
         self._step(scene_id, 2, steps)
         self._fade(standby)
+        self._wait_until_end(scene_id, 2, steps)
