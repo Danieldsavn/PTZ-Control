@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.4/PTZ-Control.exe",
-    "sha256":  "7367c0b9ebf84c6c69720931620542fa11f8c8030e3c1237b16e065c805d75f4",
-    "version":  "4.4",
-    "release_notes":  "Pre Service MIDI cue (title/lyrics off, full screen slide). Confirmation when disabling ProPresenter Service Cues on the stream bar. Includes v4.3 service cue automation and UI feedback sync."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.4.1/PTZ-Control.exe",
+    "sha256":  "fc2f2fdfd5a53855f974d9d4a7e7d77f638eb84979b2dfba309c5a628db72a75",
+    "version":  "4.4.1",
+    "release_notes":  "Shorter service cue step lists, stable countdown timer, block all MIDI while a service cue is running. Includes v4.4 Pre Service cue and disable confirmation."
 }
