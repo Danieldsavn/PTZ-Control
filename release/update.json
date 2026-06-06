@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.3/PTZ-Control.exe",
-    "sha256":  "5effafc7c05845087e600b1259a15d9d78c0d512a0c7f44424e9903a1aacde1e",
-    "version":  "4.3",
-    "release_notes":  "ProPresenter service cues: Worship, Sermon, and End of Service multi-step automation with progress popup, dedup, and cancel. Stream bar toggle to disable service cues. MIDI UI feedback sync fixes preset buttons after cues."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.4/PTZ-Control.exe",
+    "sha256":  "7367c0b9ebf84c6c69720931620542fa11f8c8030e3c1237b16e065c805d75f4",
+    "version":  "4.4",
+    "release_notes":  "Pre Service MIDI cue (title/lyrics off, full screen slide). Confirmation when disabling ProPresenter Service Cues on the stream bar. Includes v4.3 service cue automation and UI feedback sync."
 }
