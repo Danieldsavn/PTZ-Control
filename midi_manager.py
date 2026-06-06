@@ -65,6 +65,10 @@ SCENES: dict[str, dict[str, str]] = {
         "label": "Full Screen Slide (Auto)",
         "description": "AUTO to Input 3; splitview off; neither camera live",
     },
+    "pre_service_transition": {
+        "label": "Pre Service",
+        "description": "Service cue: title off, lyrics key off, full screen slide",
+    },
     "worship_transition": {
         "label": "Worship",
         "description": "Service cue: preset 11, lyrics on, auto transition (standby camera)",
@@ -86,6 +90,7 @@ _LEGACY_SCENE_NOTE_MAP: dict[str, str] = {
     "camera_plus_lyrics": "lyrics_on",
     "full_screen_camera": "splitview_off",
     "worship": "worship_transition",
+    "pre_service": "pre_service_transition",
     "sermon": "sermon_transition",
     "end_of_service": "end_service_transition",
 }

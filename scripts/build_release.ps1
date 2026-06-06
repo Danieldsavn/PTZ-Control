@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
-$Version = "4.3"
+$Version = "4.4"
 Write-Host "Building PTZ-Control v$Version"
 
 # Sync version.json
@@ -48,7 +48,7 @@ $manifest = @{
     version       = $Version
     download_url  = "https://github.com/Danieldsavn/PTZ-Control/releases/download/v$Version/PTZ-Control.exe"
     sha256        = $hash
-    release_notes = "ProPresenter service cues: Worship, Sermon, and End of Service multi-step automation with progress popup, dedup, and cancel. Stream bar toggle to disable service cues. MIDI UI feedback sync fixes preset buttons after cues."
+    release_notes = "Pre Service MIDI cue (title/lyrics off, full screen slide). Confirmation when disabling ProPresenter Service Cues on the stream bar. Includes v4.3 service cue automation and UI feedback sync."
 } | ConvertTo-Json -Depth 3
 $manifest | Set-Content -Path "release\update.json" -Encoding UTF8
 Write-Host "Wrote release\update.json"

@@ -1,5 +1,5 @@
 """
-ProPresenter service cues (Worship, Sermon, End of Service) — multi-step sequences
+ProPresenter service cues (Pre Service, Worship, Sermon, End of Service) — multi-step sequences
 with deduplication, cancellable execution, and UI progress events.
 """
 from __future__ import annotations
@@ -11,12 +11,14 @@ from typing import Any, Callable
 import app_log
 
 SERVICE_SCENE_PART: dict[str, str] = {
+    "pre_service_transition": "pre_service",
     "worship_transition": "worship",
     "sermon_transition": "sermon",
     "end_service_transition": "end",
 }
 
 SERVICE_SCENE_LABEL: dict[str, str] = {
+    "pre_service_transition": "Pre Service",
     "worship_transition": "Worship",
     "sermon_transition": "Sermon",
     "end_service_transition": "End of Service",
@@ -80,6 +82,7 @@ class ServiceCueController:
             self._current_part = part
 
         runner = {
+            "pre_service_transition": self._run_pre_service,
             "worship_transition": self._run_worship,
             "sermon_transition": self._run_sermon,
             "end_service_transition": self._run_end,
@@ -206,6 +209,32 @@ class ServiceCueController:
         if not ok:
             raise RuntimeError(msg or "Cut failed")
         self._push_ui({"type": "camera_take", "cam": cam, "method": "cut"})
+
+    def _full_screen_slide(self) -> None:
+        sm = self._get_switcher()
+        ok, msg = sm.full_screen_slide_on()
+        if not ok:
+            raise RuntimeError(msg or "Full screen slide failed")
+        self._push_ui({"type": "cue", "cue": "full_screen_slide_auto"})
+
+    def _run_pre_service(self) -> None:
+        scene_id = "pre_service_transition"
+        steps = [
+            "Turn title off",
+            "Turn ProPresenter layer off",
+            "Go to full screen slide",
+        ]
+        total = 5.0
+        self._begin(scene_id, steps, total)
+
+        self._step(scene_id, 0, steps, total)
+        self._title(False)
+        self._step(scene_id, 1, steps, total)
+        self._lyrics(False)
+        self._step(scene_id, 2, steps, total)
+        self._full_screen_slide()
+
+        self._sleep(5.0, scene_id, 2, steps)
 
     def _run_worship(self) -> None:
         scene_id = "worship_transition"

@@ -1518,6 +1518,20 @@
       </div>
     </div>
   </div>
+  <div id="serviceCuesDisableConfirm" class="streamStopConfirmOverlay" aria-hidden="true">
+    <div class="streamStopConfirmBackdrop" onclick="closeServiceCuesDisableConfirm()" aria-hidden="true"></div>
+    <div class="streamStopConfirmModal" role="alertdialog" aria-modal="true" aria-labelledby="serviceCuesDisableConfirmTitle" aria-describedby="serviceCuesDisableConfirmMessage">
+      <div class="streamStopConfirmBody">
+        <div class="streamStopConfirmIcon" aria-hidden="true">&#9888;</div>
+        <h2 id="serviceCuesDisableConfirmTitle" class="streamStopConfirmTitle">Disable ProPresenter Service Cues?</h2>
+        <p id="serviceCuesDisableConfirmMessage" class="streamStopConfirmMessage">Are you sure you want to disable the ProPresenter MIDI cues? Doing so will require manual changes. Please only do this if an operator is present. If you are an operator&hellip;You Rock!</p>
+      </div>
+      <div class="streamStopConfirmActions">
+        <button type="button" class="streamStopConfirmCancel" id="serviceCuesDisableConfirmCancel" onclick="closeServiceCuesDisableConfirm()">Cancel</button>
+        <button type="button" class="streamStopConfirmEnd" id="serviceCuesDisableConfirmOk" onclick="confirmDisableServiceCues()">Disable Cues</button>
+      </div>
+    </div>
+  </div>
   <div id="serviceCueOverlay" class="streamStopConfirmOverlay serviceCueOverlay" aria-hidden="true">
     <div class="streamStopConfirmBackdrop" aria-hidden="true"></div>
     <div class="streamStopConfirmModal" role="alertdialog" aria-modal="true" aria-labelledby="serviceCueTitle" aria-describedby="serviceCueMessage">
@@ -1584,7 +1598,7 @@
       <span class="streamBarSpacer" aria-hidden="true"></span>
       <input type="text" id="streamBarStatus" class="streamBarStatus" readonly aria-label="Stream status" value="Loading stream status…" />
       <button type="button" class="ghost streamSettingsBtn" id="streamSettingsBtn" onclick="toggleObsSettings()">Settings</button>
-      <div class="streamBarToggle serviceCuesToggle" id="serviceCuesToggleWrap" role="button" tabindex="0" aria-pressed="true" title="Enable Worship, Sermon, and End of Service MIDI automation" onclick="onServiceCuesToggleClick()" onkeydown="streamToggleKeydown(event, onServiceCuesToggleClick)">
+      <div class="streamBarToggle serviceCuesToggle" id="serviceCuesToggleWrap" role="button" tabindex="0" aria-pressed="true" title="Enable Pre Service, Worship, Sermon, and End of Service MIDI automation" onclick="onServiceCuesToggleClick()" onkeydown="streamToggleKeydown(event, onServiceCuesToggleClick)">
         <span class="streamToggleLabel">ProPresenter Service Cues</span>
         <span class="streamToggleState" id="serviceCuesToggleState">On</span>
         <div class="toggleSwitch streamToggleSwitch on" id="serviceCuesToggle" aria-hidden="true"></div>
@@ -1812,7 +1826,7 @@
       </div>
 
       <div id="settingsTabPanelMidi" class="settingsTabPanel">
-        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Receive-only MIDI from ProPresenter — assign one note per cue (Lyrics/Title/Splitview on &amp; off, Camera cuts, Stills, Full Screen Slide AUTO, Worship, Sermon, End of Service). Press <b>Learn</b>, then play a note within <b>15 seconds</b>.</p>
+        <p class="small" style="margin:0 0 12px 0; color:#64748b;">Receive-only MIDI from ProPresenter — assign one note per cue (Lyrics/Title/Splitview on &amp; off, Camera cuts, Stills, Full Screen Slide AUTO, Pre Service, Worship, Sermon, End of Service). Press <b>Learn</b>, then play a note within <b>15 seconds</b>.</p>
         <p id="midiStatusLine" class="small">Loading MIDI…</p>
         <button type="button" class="ghost" id="midiCancelLearnBtn" style="display:none; margin:0 0 12px 0;" onclick="midiCancelLearn()">Cancel learning</button>
         <div class="obsSettingsRow" style="align-items: center;">
@@ -1961,6 +1975,7 @@
   let streamBarPollDebounceTimer = null;
   let midiProPresenterIndicatorTimer = null;
   let serviceCueOverlayOpen = false;
+  let serviceCuesDisableConfirmOpen = false;
   let lastTrackingPollAt = 0;
   let previewRefreshIntervalId = null;
   let previewRetryTimer = null;
@@ -2222,22 +2237,57 @@
     if (state.obsConfig) state.obsConfig.service_cues_enabled = enabled;
   }
 
+  async function setServiceCuesEnabled(enabled) {
+    const api = window.pywebview?.api;
+    if (!api?.set_service_cues_enabled) return false;
+    applyServiceCuesUi(enabled);
+    try {
+      const [ok, resp] = await api.set_service_cues_enabled(enabled);
+      if (!ok) {
+        applyServiceCuesUi(!enabled);
+        showStreamToast(resp || "Failed to update service cues setting", "error");
+        return false;
+      }
+      return true;
+    } catch (e) {
+      applyServiceCuesUi(!enabled);
+      showStreamToast("Service cues toggle error: " + e, "error");
+      return false;
+    }
+  }
+
+  function openServiceCuesDisableConfirm() {
+    const overlay = document.getElementById("serviceCuesDisableConfirm");
+    if (!overlay) return;
+    serviceCuesDisableConfirmOpen = true;
+    overlay.classList.add("open");
+    overlay.setAttribute("aria-hidden", "false");
+    const cancelBtn = document.getElementById("serviceCuesDisableConfirmCancel");
+    if (cancelBtn) cancelBtn.focus();
+  }
+
+  function closeServiceCuesDisableConfirm() {
+    const overlay = document.getElementById("serviceCuesDisableConfirm");
+    if (!overlay) return;
+    serviceCuesDisableConfirmOpen = false;
+    overlay.classList.remove("open");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+
+  async function confirmDisableServiceCues() {
+    closeServiceCuesDisableConfirm();
+    await setServiceCuesEnabled(false);
+  }
+
   async function onServiceCuesToggleClick() {
     const toggle = document.getElementById("serviceCuesToggle");
-    const api = window.pywebview?.api;
-    if (!toggle || !api?.set_service_cues_enabled) return;
-    const nowOn = !toggle.classList.contains("on");
-    applyServiceCuesUi(nowOn);
-    try {
-      const [ok, resp] = await api.set_service_cues_enabled(nowOn);
-      if (!ok) {
-        applyServiceCuesUi(!nowOn);
-        showStreamToast(resp || "Failed to update service cues setting", "error");
-      }
-    } catch (e) {
-      applyServiceCuesUi(!nowOn);
-      showStreamToast("Service cues toggle error: " + e, "error");
+    if (!toggle || !window.pywebview?.api?.set_service_cues_enabled) return;
+    const currentlyOn = toggle.classList.contains("on");
+    if (currentlyOn) {
+      openServiceCuesDisableConfirm();
+      return;
     }
+    await setServiceCuesEnabled(true);
   }
 
   function setStreamBarToggle(wrap, stateEl, toggleEl, on) {
@@ -4843,6 +4893,11 @@
         if (streamStopConfirmOpen) {
           event.preventDefault();
           closeStreamStopConfirm();
+          return;
+        }
+        if (serviceCuesDisableConfirmOpen) {
+          event.preventDefault();
+          closeServiceCuesDisableConfirm();
           return;
         }
         if (serviceCueOverlayOpen) {
