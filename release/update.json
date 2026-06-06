@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.4.2/PTZ-Control.exe",
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.5/PTZ-Control.exe",
     "sha256":  "2bee5441fe8660b6170a17ee19c602eff0ebd02aaeb8a51a778c658cfb99b1de",
-    "version":  "4.4.2",
+    "version":  "4.5",
     "release_notes":  "Service cue countdown runs once for the whole cue (not per step). Includes v4.4.1 shorter steps, MIDI lockout during cues, Pre Service cue, and disable confirmation."
 }
