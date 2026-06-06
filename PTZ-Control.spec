@@ -10,6 +10,7 @@ _hidden = [
     'gostream_client',
     'midi_manager',
     'preview_server',
+    'service_cues',
     'update_checker',
     'mido.backends.rtmidi',
     'rtmidi',

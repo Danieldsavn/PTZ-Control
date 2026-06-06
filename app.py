@@ -55,6 +55,7 @@ import json
 import socket
 import threading
 import time
+from collections import deque
 import requests
 import webview
 from gostream_client import (
@@ -92,6 +93,7 @@ from midi_manager import (
     midi_available,
     normalize_midi_config,
 )
+from service_cues import SERVICE_SCENE_PART, ServiceCueController
 from update_checker import (
     DEFAULT_MANIFEST_URL,
     check_for_update,
@@ -485,6 +487,7 @@ def _default_switcher_config():
         "auto_reconnect": True,
         "switching_hold_seconds": 0,
         "simple_mode": False,
+        "service_cues_enabled": True,
         "stream1_key": "",
         "settings_last_tab": "stream",
         "keyboard_hints_dismissed": False,
@@ -580,6 +583,8 @@ def _load_switcher_config():
                     data["debug_log_verbose_gostream"] = base[
                         "debug_log_verbose_gostream"
                     ]
+                if "service_cues_enabled" not in data:
+                    data["service_cues_enabled"] = base["service_cues_enabled"]
                 if "camera_mix_rate_seconds" not in data:
                     legacy_rate = float(data.get("key_mix_rate_seconds", 1.0))
                     half = max(0.5, legacy_rate / 2.0)
@@ -1027,6 +1032,11 @@ class SwitcherManager:
     def set_simple_mode(self, value: bool):
         with self._lock:
             self._config["simple_mode"] = bool(value)
+            _save_switcher_config(self._config)
+
+    def set_service_cues_enabled(self, value: bool):
+        with self._lock:
+            self._config["service_cues_enabled"] = bool(value)
             _save_switcher_config(self._config)
 
     def set_ui_prefs(self, prefs: dict):
@@ -1664,7 +1674,38 @@ def _get_switcher_manager():
 
 _midi_manager = None
 _midi_ui_event_lock = threading.Lock()
-_midi_ui_event: dict[str, Any] | None = None
+_midi_ui_event_queue: deque[dict[str, Any]] = deque()
+_service_cue_controller: ServiceCueController | None = None
+
+
+def _push_midi_ui_event(evt: dict[str, Any]) -> None:
+    """Queue an event for the UI thread to consume on poll."""
+    with _midi_ui_event_lock:
+        _midi_ui_event_queue.append(dict(evt))
+
+
+def _pop_midi_ui_event() -> dict[str, Any] | None:
+    with _midi_ui_event_lock:
+        if _midi_ui_event_queue:
+            return _midi_ui_event_queue.popleft()
+        return None
+
+
+def _notify_midi_propresenter_ui(cue_id: str) -> None:
+    _push_midi_ui_event({"type": "cue", "cue": str(cue_id), "at": time.time()})
+
+
+def _get_service_cue_controller() -> ServiceCueController:
+    global _service_cue_controller
+    if _service_cue_controller is None:
+        _service_cue_controller = ServiceCueController(
+            push_ui_event=_push_midi_ui_event,
+            get_switcher=_get_switcher_manager,
+            non_live_cam=_midi_non_live_cam,
+            tracking_set=_midi_tracking_set,
+            recall_preset=_midi_recall_preset,
+        )
+    return _service_cue_controller
 
 
 def _save_midi_config_section(midi_cfg: dict) -> None:
@@ -1672,24 +1713,6 @@ def _save_midi_config_section(midi_cfg: dict) -> None:
     data = _load_switcher_config()
     data["midi"] = normalize_midi_config(midi_cfg)
     _save_switcher_config(data)
-
-
-def _notify_midi_propresenter_ui(cue_id: str) -> None:
-    """Queue cue for UI thread to consume on next poll."""
-    global _midi_ui_event
-    with _midi_ui_event_lock:
-        _midi_ui_event = {
-            "cue": str(cue_id),
-            "at": time.time(),
-        }
-
-
-def _pop_midi_ui_event() -> dict[str, Any] | None:
-    global _midi_ui_event
-    with _midi_ui_event_lock:
-        evt = _midi_ui_event
-        _midi_ui_event = None
-        return evt
 
 
 def _midi_non_live_cam(sm: "SwitcherManager") -> str:
@@ -1728,41 +1751,23 @@ def _midi_trigger_scene(scene_id: str) -> None:
     meta = MIDI_SCENES.get(scene_id, {})
     label = meta.get("label", scene_id)
     app_log.midi("Trigger cue", {"cue": scene_id, "label": label})
+
+    if scene_id in SERVICE_SCENE_PART:
+        enabled = bool(_get_switcher_manager()._config.get("service_cues_enabled", True))
+        if not enabled:
+            app_log.midi("Service cue ignored (disabled)", {"cue": scene_id})
+            return
+        ok, msg = _get_service_cue_controller().try_start(scene_id)
+        if not ok:
+            app_log.midi("Service cue skipped", {"cue": scene_id, "reason": msg})
+        return
+
     sm = _get_switcher_manager()
     st = sm.get_status() if hasattr(sm, "get_status") else {}
     usk_on = bool(st.get("usk1On")) if isinstance(st, dict) else False
     dsk_on = bool(st.get("dsk1On")) if isinstance(st, dict) else False
     split_on = bool(st.get("splitviewOn")) if isinstance(st, dict) else False
     slide_on = bool(st.get("fullScreenSlideOn")) if isinstance(st, dict) else False
-
-    def worship_transition() -> tuple[bool, str]:
-        cam = _midi_non_live_cam(sm)
-        _midi_tracking_set(cam, False)
-        _midi_recall_preset(cam, 11)
-        ok, msg = sm.fade_camera(cam)
-        if not ok:
-            return ok, msg
-        time.sleep(1.0)
-        return sm.usk1_set(True)
-
-    def sermon_transition() -> tuple[bool, str]:
-        cam = _midi_non_live_cam(sm)
-        sm.usk1_set(False)
-        _midi_tracking_set(cam, False)
-        _midi_recall_preset(cam, 1)
-        ok, msg = sm.cut_camera(cam)
-        if not ok:
-            return ok, msg
-        time.sleep(5.0)
-        _midi_tracking_set(cam, True)
-        return True, "Sermon transition"
-
-    def end_service_transition() -> tuple[bool, str]:
-        cam = _midi_non_live_cam(sm)
-        sm.usk1_set(False)
-        _midi_tracking_set(cam, False)
-        _midi_recall_preset(cam, 12)
-        return sm.fade_camera(cam)
 
     handlers: dict[str, Callable[[], Any]] = {
         "lyrics_on": (lambda: (True, "Lyrics already On") if usk_on else sm.usk1_set(True)),
@@ -1777,9 +1782,6 @@ def _midi_trigger_scene(scene_id: str) -> None:
         "still_nate": lambda: sm.activate_still(2),
         "still_cecil": lambda: sm.activate_still(3),
         "full_screen_slide_auto": (lambda: (True, "Full Screen Slide already On") if slide_on else sm.full_screen_slide_on()),
-        "worship_transition": worship_transition,
-        "sermon_transition": sermon_transition,
-        "end_service_transition": end_service_transition,
     }
     handler = handlers.get(scene_id)
     if not handler:
@@ -2098,6 +2100,14 @@ class Api:
             return True
         except Exception as e:
             return False, str(e)
+
+    def set_service_cues_enabled(self, enabled: bool):
+        try:
+            _get_switcher_manager().set_service_cues_enabled(bool(enabled))
+            on = bool(enabled)
+            return True, "ProPresenter Service Cues " + ("enabled" if on else "disabled")
+        except Exception as e:
+            return False, f"set_service_cues_enabled error: {e}"
 
     def switcher_get_status(self):
         try:
@@ -2431,7 +2441,19 @@ class Api:
         except Exception as e:
             return False, f"midi_pop_ui_event error: {e}"
 
-  # --------- App update ---------
+    def midi_cancel_service_cue(self):
+        try:
+            return _get_service_cue_controller().cancel()
+        except Exception as e:
+            return False, f"midi_cancel_service_cue error: {e}"
+
+    def midi_get_service_state(self):
+        try:
+            return True, _get_service_cue_controller().get_state()
+        except Exception as e:
+            return False, f"midi_get_service_state error: {e}"
+
+    # --------- App update ---------
     def check_for_update(self, force=False):
         try:
             cfg = _load_switcher_config()

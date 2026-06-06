@@ -67,15 +67,15 @@ SCENES: dict[str, dict[str, str]] = {
     },
     "worship_transition": {
         "label": "Worship",
-        "description": "Other camera preset 11, tracking off, AUTO, then lyrics on",
+        "description": "Service cue: preset 11, lyrics on, auto transition (standby camera)",
     },
     "sermon_transition": {
         "label": "Sermon",
-        "description": "Other camera preset 1, lyrics off, CUT, then tracking on (5s)",
+        "description": "Service cue: preset 3 then tracking camera preset 1, title on/off",
     },
     "end_service_transition": {
         "label": "End of Service",
-        "description": "Other camera preset 12, lyrics off, tracking off, then AUTO",
+        "description": "Service cue: preset 11, lyrics off, auto transition (standby camera)",
     },
 }
 

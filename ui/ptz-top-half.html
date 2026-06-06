@@ -486,6 +486,13 @@
       min-width: 50px;
       height: 1px;
     }
+    .streamBarSpacer {
+      flex: 1 1 auto;
+      min-width: 8px;
+    }
+    .streamBarToggle.serviceCuesToggle .streamToggleLabel {
+      white-space: nowrap;
+    }
     .streamBarStatus {
       flex: 1 1 200px;
       min-width: 180px;
@@ -1244,6 +1251,52 @@
       background: #1e40af;
       color: #fff;
     }
+    .serviceCueOverlay .streamStopConfirmIcon {
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-size: 22px;
+    }
+    .serviceCuePartLabel {
+      margin: 0 0 12px;
+      font-size: 16px;
+      font-weight: 600;
+      color: #1e40af;
+    }
+    .serviceCueCountdown {
+      margin: 0 0 16px;
+      font-size: 32px;
+      font-weight: 700;
+      color: #0f172a;
+      font-variant-numeric: tabular-nums;
+    }
+    .serviceCueSteps {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      text-align: left;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    .serviceCueSteps li {
+      padding: 8px 10px;
+      margin: 0 0 6px;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #64748b;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+    }
+    .serviceCueSteps li.active {
+      color: #0f172a;
+      background: #eff6ff;
+      border-color: #bfdbfe;
+      font-weight: 600;
+    }
+    .serviceCueSteps li.done {
+      color: #16a34a;
+      background: #f0fdf4;
+      border-color: #bbf7d0;
+    }
     .updateConfirmPrimary:hover {
       background: #1d4ed8;
     }
@@ -1465,6 +1518,21 @@
       </div>
     </div>
   </div>
+  <div id="serviceCueOverlay" class="streamStopConfirmOverlay serviceCueOverlay" aria-hidden="true">
+    <div class="streamStopConfirmBackdrop" aria-hidden="true"></div>
+    <div class="streamStopConfirmModal" role="alertdialog" aria-modal="true" aria-labelledby="serviceCueTitle" aria-describedby="serviceCueMessage">
+      <div class="streamStopConfirmBody">
+        <div class="streamStopConfirmIcon" aria-hidden="true">&#9835;</div>
+        <h2 id="serviceCueTitle" class="streamStopConfirmTitle">ProPresenter Service Cue Activated</h2>
+        <p id="serviceCuePartLabel" class="serviceCuePartLabel">Worship</p>
+        <div id="serviceCueCountdown" class="serviceCueCountdown" aria-live="polite">8</div>
+        <ul id="serviceCueSteps" class="serviceCueSteps" aria-label="Service cue steps"></ul>
+      </div>
+      <div class="streamStopConfirmActions">
+        <button type="button" class="streamStopConfirmCancel" id="serviceCueCancelBtn" onclick="cancelServiceCue()">Cancel</button>
+      </div>
+    </div>
+  </div>
   <div class="top">
     <div class="titleBar pywebview-drag-region">
       <span class="appTitle">PTZ-Control</span>
@@ -1513,8 +1581,14 @@
       <span class="streamLabel">Stream</span>
       <button type="button" class="primary goLive" id="streamGoLiveBtn" onclick="streamGoLive()">Go Live</button>
       <button type="button" class="danger streamStop" id="streamStopBtn" onclick="requestStreamStop()" disabled aria-disabled="true">Stop</button>
+      <span class="streamBarSpacer" aria-hidden="true"></span>
       <input type="text" id="streamBarStatus" class="streamBarStatus" readonly aria-label="Stream status" value="Loading stream status…" />
       <button type="button" class="ghost streamSettingsBtn" id="streamSettingsBtn" onclick="toggleObsSettings()">Settings</button>
+      <div class="streamBarToggle serviceCuesToggle" id="serviceCuesToggleWrap" role="button" tabindex="0" aria-pressed="true" title="Enable Worship, Sermon, and End of Service MIDI automation" onclick="onServiceCuesToggleClick()" onkeydown="streamToggleKeydown(event, onServiceCuesToggleClick)">
+        <span class="streamToggleLabel">ProPresenter Service Cues</span>
+        <span class="streamToggleState" id="serviceCuesToggleState">On</span>
+        <div class="toggleSwitch streamToggleSwitch on" id="serviceCuesToggle" aria-hidden="true"></div>
+      </div>
     </div>
     <div id="streamToast" class="streamToast" aria-live="polite"><span id="streamToastMsg" class="streamToastMsg"></span></div>
     </div>
@@ -1886,6 +1960,8 @@
   let streamBarPending = {};
   let streamBarPollDebounceTimer = null;
   let midiProPresenterIndicatorTimer = null;
+  let serviceCueOverlayOpen = false;
+  let lastTrackingPollAt = 0;
   let previewRefreshIntervalId = null;
   let previewRetryTimer = null;
 
@@ -2013,32 +2089,155 @@
         setFullScreenSlideUi(true);
         setSplitviewUi(false);
         break;
-      case "worship_transition":
-        setStreamBarPending("usk1On", true);
-        setLyricsUi(true);
-        break;
-      case "sermon_transition":
-        setStreamBarPending("usk1On", false);
-        setLyricsUi(false);
-        break;
-      case "end_service_transition":
-        setStreamBarPending("usk1On", false);
-        setLyricsUi(false);
-        break;
       default:
         break;
     }
     pollObsStatus();
   };
 
+  function setTrackingUi(cam, on) {
+    state[cam].trackingOn = !!on;
+    updateTrackingButtons(cam);
+  }
+
+  async function setActivePresetUi(cam, preset) {
+    state[cam].activePreset = preset;
+    const labels = await loadPresetLabelsForMode(cam);
+    buildPresetUI(cam, labels);
+  }
+
+  function applyMidiCameraTake(cam, method) {
+    status(cam, method === "cut" ? "Cut successful ✓" : "Auto successful ✓");
+    applyLock(cam);
+  }
+
+  function renderServiceCueSteps(steps, activeIndex) {
+    const list = document.getElementById("serviceCueSteps");
+    if (!list || !Array.isArray(steps)) return;
+    list.innerHTML = "";
+    steps.forEach(function (text, idx) {
+      const li = document.createElement("li");
+      li.textContent = text;
+      if (idx < activeIndex) li.classList.add("done");
+      else if (idx === activeIndex) li.classList.add("active");
+      list.appendChild(li);
+    });
+  }
+
+  function openServiceCueModal(evt) {
+    const overlay = document.getElementById("serviceCueOverlay");
+    const partEl = document.getElementById("serviceCuePartLabel");
+    const countdownEl = document.getElementById("serviceCueCountdown");
+    if (!overlay) return;
+    serviceCueOverlayOpen = true;
+    overlay.classList.add("open");
+    overlay.setAttribute("aria-hidden", "false");
+    if (partEl) partEl.textContent = evt.label || evt.part || "Service cue";
+    if (countdownEl) countdownEl.textContent = String(evt.remaining_sec != null ? evt.remaining_sec : "");
+    renderServiceCueSteps(evt.steps || [], evt.step_index || 0);
+    const cancelBtn = document.getElementById("serviceCueCancelBtn");
+    if (cancelBtn) cancelBtn.focus();
+  }
+
+  function updateServiceCueModal(evt) {
+    if (!serviceCueOverlayOpen) openServiceCueModal(evt);
+    const countdownEl = document.getElementById("serviceCueCountdown");
+    if (countdownEl && evt.remaining_sec != null) {
+      countdownEl.textContent = String(Math.max(0, evt.remaining_sec));
+    }
+    renderServiceCueSteps(evt.steps || [], evt.step_index != null ? evt.step_index : 0);
+  }
+
+  function closeServiceCueModal() {
+    const overlay = document.getElementById("serviceCueOverlay");
+    if (!overlay) return;
+    serviceCueOverlayOpen = false;
+    overlay.classList.remove("open");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+
+  async function cancelServiceCue() {
+    try {
+      if (window.pywebview?.api?.midi_cancel_service_cue) {
+        await window.pywebview.api.midi_cancel_service_cue();
+      }
+    } catch (e) {}
+    closeServiceCueModal();
+  }
+
+  function handleMidiUiEvent(evt) {
+    if (!evt) return;
+    const type = evt.type || (evt.cue ? "cue" : "");
+    switch (type) {
+      case "service_cue_start":
+        openServiceCueModal(evt);
+        showMidiProPresenterIndicator();
+        break;
+      case "service_cue_progress":
+        updateServiceCueModal(evt);
+        break;
+      case "service_cue_end":
+      case "service_cue_cancelled":
+        closeServiceCueModal();
+        pollObsStatus();
+        break;
+      case "tracking":
+        setTrackingUi(evt.cam, evt.on);
+        break;
+      case "preset":
+        setActivePresetUi(evt.cam, evt.preset);
+        break;
+      case "camera_take":
+        applyMidiCameraTake(evt.cam, evt.method || "cut");
+        break;
+      case "cue":
+      default:
+        if (evt.cue) window.handleMidiProPresenterCue(evt.cue);
+        break;
+    }
+  }
+
   async function pollMidiUiEvent(api) {
     try {
       if (!api?.midi_pop_ui_event) return;
-      const [ok, evt] = await api.midi_pop_ui_event();
-      if (ok && evt && evt.cue) {
-        window.handleMidiProPresenterCue(evt.cue);
+      for (let i = 0; i < 32; i++) {
+        const [ok, evt] = await api.midi_pop_ui_event();
+        if (!ok || !evt) break;
+        handleMidiUiEvent(evt);
       }
     } catch (e) {}
+  }
+
+  function applyServiceCuesUi(on) {
+    const wrap = document.getElementById("serviceCuesToggleWrap");
+    const toggle = document.getElementById("serviceCuesToggle");
+    const stateEl = document.getElementById("serviceCuesToggleState");
+    const enabled = on !== false;
+    if (wrap) {
+      wrap.classList.toggle("active", enabled);
+      wrap.setAttribute("aria-pressed", enabled ? "true" : "false");
+    }
+    if (toggle) toggle.classList.toggle("on", enabled);
+    if (stateEl) stateEl.textContent = enabled ? "On" : "Off";
+    if (state.obsConfig) state.obsConfig.service_cues_enabled = enabled;
+  }
+
+  async function onServiceCuesToggleClick() {
+    const toggle = document.getElementById("serviceCuesToggle");
+    const api = window.pywebview?.api;
+    if (!toggle || !api?.set_service_cues_enabled) return;
+    const nowOn = !toggle.classList.contains("on");
+    applyServiceCuesUi(nowOn);
+    try {
+      const [ok, resp] = await api.set_service_cues_enabled(nowOn);
+      if (!ok) {
+        applyServiceCuesUi(!nowOn);
+        showStreamToast(resp || "Failed to update service cues setting", "error");
+      }
+    } catch (e) {
+      applyServiceCuesUi(!nowOn);
+      showStreamToast("Service cues toggle error: " + e, "error");
+    }
   }
 
   function setStreamBarToggle(wrap, stateEl, toggleEl, on) {
@@ -2555,6 +2754,12 @@
       const api = window.pywebview?.api;
       if (!api?.obs_get_status) return;
       pollMidiUiEvent(api);
+      const now = Date.now();
+      if (now - lastTrackingPollAt > 5000) {
+        lastTrackingPollAt = now;
+        fetchTrackingStatus("cam1");
+        fetchTrackingStatus("cam2");
+      }
       const [ok, obsStatus] = await api.obs_get_status();
       if (ok && obsStatus) {
         const connected = !!obsStatus.connected;
@@ -4426,6 +4631,7 @@
           updateToggle.setAttribute("aria-pressed", updateOn ? "true" : "false");
         }
         refreshDebugLogUi();
+        applyServiceCuesUi(config.service_cues_enabled !== false);
       }
     } catch (e) {}
   }
@@ -4637,6 +4843,11 @@
         if (streamStopConfirmOpen) {
           event.preventDefault();
           closeStreamStopConfirm();
+          return;
+        }
+        if (serviceCueOverlayOpen) {
+          event.preventDefault();
+          cancelServiceCue();
           return;
         }
         const overlay = document.getElementById("settingsDock");
