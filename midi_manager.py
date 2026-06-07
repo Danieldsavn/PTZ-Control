@@ -98,6 +98,8 @@ _LEGACY_SCENE_NOTE_MAP: dict[str, str] = {
 NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 LEARN_TIMEOUT_SEC = 15.0
+MIDI_OPEN_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 5.0)
+MIDI_STARTUP_ENSURE_DELAY_S = 2.0
 MIDI_RETRY_INTERVAL_S = 45.0
 
 _mido_backend_ready = False
@@ -230,15 +232,21 @@ class MidiManager:
         self._last_trigger_at: dict[int, float] = {}
         self._last_open_error: str = ""
         self._retry_thread: Optional[threading.Thread] = None
-        self.reload_config()
+        self._startup_retry_thread: Optional[threading.Thread] = None
+        self._load_config_data()
         self.start()
 
-    def reload_config(self) -> None:
+    def _load_config_data(self) -> None:
         cfg = self._load_config()
         midi_raw = cfg.get("midi") if isinstance(cfg, dict) else None
         with self._lock:
-            old_device = (self._midi_cfg.get("device") or "").strip()
             self._midi_cfg = normalize_midi_config(midi_raw)
+
+    def reload_config(self) -> None:
+        with self._lock:
+            old_device = (self._midi_cfg.get("device") or "").strip()
+        self._load_config_data()
+        with self._lock:
             new_device = (self._midi_cfg.get("device") or "").strip()
         if old_device != new_device:
             self._restart_listener()
@@ -417,6 +425,25 @@ class MidiManager:
                 target=self._retry_loop, name="MidiRetry", daemon=True
             )
             self._retry_thread.start()
+        if self._startup_retry_thread is None or not self._startup_retry_thread.is_alive():
+            self._startup_retry_thread = threading.Thread(
+                target=self._startup_ensure_loop,
+                name="MidiStartupRetry",
+                daemon=True,
+            )
+            self._startup_retry_thread.start()
+
+    def _startup_ensure_loop(self) -> None:
+        if self._stop.wait(MIDI_STARTUP_ENSURE_DELAY_S):
+            return
+        with self._lock:
+            device = (self._midi_cfg.get("device") or "").strip()
+        if not device:
+            return
+        if self._listener_alive() and self._port is not None:
+            return
+        app_log.midi("Startup ensure listening", {"device": device})
+        self._restart_listener()
 
     def _retry_loop(self) -> None:
         while not self._stop.wait(MIDI_RETRY_INTERVAL_S):
@@ -467,13 +494,41 @@ class MidiManager:
 
     def _listen_loop(self, device_name: str) -> None:
         _ensure_mido_backend()
-        try:
-            port = mido.open_input(device_name)
-            self._last_open_error = ""
-            app_log.midi("Listener started", {"device": device_name})
-        except Exception as e:
-            self._last_open_error = str(e)
-            app_log.midi("Listener open failed", {"device": device_name, "error": str(e)})
+        port = None
+        delays = (0.0,) + MIDI_OPEN_RETRY_DELAYS_S
+        for attempt, delay in enumerate(delays):
+            if self._stop.is_set():
+                return
+            if delay > 0 and self._stop.wait(delay):
+                return
+            try:
+                port = mido.open_input(device_name)
+                self._last_open_error = ""
+                if attempt > 0:
+                    app_log.midi(
+                        "Listener started after retry",
+                        {"device": device_name, "attempt": attempt + 1},
+                    )
+                else:
+                    app_log.midi("Listener started", {"device": device_name})
+                break
+            except Exception as e:
+                self._last_open_error = str(e)
+                if attempt >= len(delays) - 1:
+                    app_log.midi(
+                        "Listener open failed",
+                        {"device": device_name, "error": str(e)},
+                    )
+                else:
+                    app_log.midi(
+                        "Listener open retry",
+                        {
+                            "device": device_name,
+                            "attempt": attempt + 1,
+                            "error": str(e),
+                        },
+                    )
+        if port is None:
             return
         self._port = port
         try:

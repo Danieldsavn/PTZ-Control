@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.5/PTZ-Control.exe",
-    "sha256":  "2bee5441fe8660b6170a17ee19c602eff0ebd02aaeb8a51a778c658cfb99b1de",
-    "version":  "4.5",
-    "release_notes":  "Service cue countdown runs once for the whole cue (not per step). Includes v4.4.1 shorter steps, MIDI lockout during cues, Pre Service cue, and disable confirmation."
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.5.1/PTZ-Control.exe",
+    "sha256":  "53a03adfc9725d4e044f459e8186060d17a7ec2672cf2a9924d2bc92cecf1d5c",
+    "version":  "4.5.1",
+    "release_notes":  "Fix MIDI listener failing to start at launch; retries opening the device shortly after startup. Includes v4.5 service cue automation and whole-cue countdown."
 }
