@@ -1,6 +1,6 @@
 ﻿{
-    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.5.1/PTZ-Control.exe",
+    "download_url":  "https://github.com/Danieldsavn/PTZ-Control/releases/download/v4.6/PTZ-Control.exe",
     "sha256":  "53a03adfc9725d4e044f459e8186060d17a7ec2672cf2a9924d2bc92cecf1d5c",
-    "version":  "4.5.1",
-    "release_notes":  "Fix MIDI listener failing to start at launch; retries opening the device shortly after startup. Includes v4.5 service cue automation and whole-cue countdown."
+    "version":  "4.6",
+    "release_notes":  "Version 4.6. Includes MIDI startup reliability fix, ProPresenter service cues with whole-cue countdown, Pre Service cue, and stream bar toggle."
 }

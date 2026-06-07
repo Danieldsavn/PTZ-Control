@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
-$Version = "4.5.1"
+$Version = "4.6"
 Write-Host "Building PTZ-Control v$Version"
 
 # Sync version.json
@@ -48,7 +48,7 @@ $manifest = @{
     version       = $Version
     download_url  = "https://github.com/Danieldsavn/PTZ-Control/releases/download/v$Version/PTZ-Control.exe"
     sha256        = $hash
-    release_notes = "Fix MIDI listener failing to start at launch; retries opening the device shortly after startup. Includes v4.5 service cue automation and whole-cue countdown."
+    release_notes = "Version 4.6. Includes MIDI startup reliability fix, ProPresenter service cues with whole-cue countdown, Pre Service cue, and stream bar toggle."
 } | ConvertTo-Json -Depth 3
 $manifest | Set-Content -Path "release\update.json" -Encoding UTF8
 Write-Host "Wrote release\update.json"
